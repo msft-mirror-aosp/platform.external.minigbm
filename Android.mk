@@ -69,7 +69,7 @@ LOCAL_MODULE_RELATIVE_PATH := hw
 LOCAL_MODULE_CLASS := SHARED_LIBRARIES
 LOCAL_MODULE_SUFFIX := $(TARGET_SHLIB_SUFFIX)
 LOCAL_HEADER_LIBRARIES += \
-	libhardware_headers libnativebase_headers libsystem_headers
+	libhardware_headers libsystem_headers
 LOCAL_SHARED_LIBRARIES += libnativewindow libsync liblog
 LOCAL_STATIC_LIBRARIES += libarect
 include $(BUILD_SHARED_LIBRARY)

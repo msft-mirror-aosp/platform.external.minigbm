@@ -12,6 +12,18 @@ extern "C" {
 #endif
 
 #include <drm_fourcc.h>
+
+/* Include some additional formats that are missing on older drm */
+#ifndef DRM_FORMAT_R8
+#define DRM_FORMAT_R8          fourcc_code('R', '8', ' ', ' ') /* [7:0] R */
+#endif
+#ifndef DRM_FORMAT_GR88
+#define DRM_FORMAT_GR88                fourcc_code('G', 'R', '8', '8') /* [15:0] G:R 8:8 little endian */
+#endif
+#ifndef DRM_FORMAT_RG88
+#define DRM_FORMAT_RG88                fourcc_code('R', 'G', '8', '8') /* [15:0] R:G 8:8 little endian */
+#endif
+
 #include <stdint.h>
 
 #define DRV_MAX_PLANES 4
