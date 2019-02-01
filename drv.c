@@ -111,7 +111,8 @@ static const struct backend *drv_get_backend(int fd)
 #ifdef DRV_VC4
 		&backend_vc4,
 #endif
-		&backend_vgem,     &backend_virtio_gpu,
+		&backend_vgem,
+		&backend_virtio_gpu,
 	};
 
 	for (i = 0; i < ARRAY_SIZE(backend_list); i++)
@@ -358,6 +359,12 @@ struct bo *drv_bo_import(struct driver *drv, struct drv_import_fd_data *data)
 	if (ret) {
 		free(bo);
 		return NULL;
+	}
+
+	for (plane = 0; plane < bo->num_planes; plane++) {
+		pthread_mutex_lock(&bo->drv->driver_lock);
+		drv_increment_reference_count(bo->drv, bo, plane);
+		pthread_mutex_unlock(&bo->drv->driver_lock);
 	}
 
 	for (plane = 0; plane < bo->num_planes; plane++) {
