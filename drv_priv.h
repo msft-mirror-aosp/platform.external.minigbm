@@ -73,7 +73,7 @@ struct backend {
 	int (*bo_unmap)(struct bo *bo, struct vma *vma);
 	int (*bo_invalidate)(struct bo *bo, struct mapping *mapping);
 	int (*bo_flush)(struct bo *bo, struct mapping *mapping);
-	uint32_t (*resolve_format)(uint32_t format, uint64_t use_flags);
+	uint32_t (*resolve_format)(struct driver *drv, uint32_t format, uint64_t use_flags);
 };
 
 // clang-format off
@@ -85,12 +85,8 @@ struct backend {
 	                    BO_USE_SW_READ_OFTEN | BO_USE_SW_WRITE_OFTEN | \
                             BO_USE_SW_READ_RARELY | BO_USE_SW_WRITE_RARELY | BO_USE_TEXTURE
 
-#define BO_USE_SW BO_USE_SW_READ_OFTEN | BO_USE_SW_WRITE_OFTEN | \
-	    BO_USE_SW_READ_RARELY | BO_USE_SW_WRITE_RARELY
-
-#define BO_USE_SW_OFTEN BO_USE_SW_READ_OFTEN | BO_USE_SW_WRITE_OFTEN
-
-#define BO_USE_SW_RARELY BO_USE_SW_READ_RARELY | BO_USE_SW_WRITE_RARELY
+#define BO_USE_SW_MASK BO_USE_SW_READ_OFTEN | BO_USE_SW_WRITE_OFTEN | \
+		       BO_USE_SW_READ_RARELY | BO_USE_SW_WRITE_RARELY
 
 #ifndef DRM_FORMAT_MOD_LINEAR
 #define DRM_FORMAT_MOD_LINEAR DRM_FORMAT_MOD_NONE

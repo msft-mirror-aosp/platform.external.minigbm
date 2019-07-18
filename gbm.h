@@ -35,6 +35,10 @@ extern "C" {
 
 #define __GBM__ 1
 
+#ifndef MINIGBM
+#define MINIGBM
+#endif
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -301,7 +305,9 @@ gbm_bo_create_with_modifiers(struct gbm_device *gbm,
 #define GBM_BO_IMPORT_WL_BUFFER         0x5501
 #define GBM_BO_IMPORT_EGL_IMAGE         0x5502
 #define GBM_BO_IMPORT_FD                0x5503
+// Deprecated. Use GBM_BO_IMPORT_FD_MODIFIER instead.
 #define GBM_BO_IMPORT_FD_PLANAR         0x5504
+#define GBM_BO_IMPORT_FD_MODIFIER       0x5505
 
 struct gbm_import_fd_data {
    int fd;
@@ -311,6 +317,18 @@ struct gbm_import_fd_data {
    uint32_t format;
 };
 
+struct gbm_import_fd_modifier_data {
+   uint32_t width;
+   uint32_t height;
+   uint32_t format;
+   uint32_t num_fds;
+   int fds[GBM_MAX_PLANES];
+   int strides[GBM_MAX_PLANES];
+   int offsets[GBM_MAX_PLANES];
+   uint64_t modifier;
+};
+
+// Deprecated. Use gbm_import_fd_modifier_data instead.
 struct gbm_import_fd_planar_data {
    int fds[GBM_MAX_PLANES];
    uint32_t width;
@@ -376,8 +394,12 @@ gbm_bo_get_stride_or_tiling(struct gbm_bo *bo);
 uint32_t
 gbm_bo_get_format(struct gbm_bo *bo);
 
+/* Deprecated */
 uint64_t
 gbm_bo_get_format_modifier(struct gbm_bo *bo);
+
+uint64_t
+gbm_bo_get_modifier(struct gbm_bo *bo);
 
 struct gbm_device *
 gbm_bo_get_device(struct gbm_bo *bo);
@@ -388,23 +410,39 @@ gbm_bo_get_handle(struct gbm_bo *bo);
 int
 gbm_bo_get_fd(struct gbm_bo *bo);
 
+/* Deprecated */
 size_t
 gbm_bo_get_num_planes(struct gbm_bo *bo);
 
+size_t
+gbm_bo_get_plane_count(struct gbm_bo *bo);
+
+/* Deprecated */
 union gbm_bo_handle
 gbm_bo_get_plane_handle(struct gbm_bo *bo, size_t plane);
+
+union gbm_bo_handle
+gbm_bo_get_handle_for_plane(struct gbm_bo* bo, size_t plane);
 
 int
 gbm_bo_get_plane_fd(struct gbm_bo *bo, size_t plane);
 
+/* Deprecated */
 uint32_t
 gbm_bo_get_plane_offset(struct gbm_bo *bo, size_t plane);
 
 uint32_t
-gbm_bo_get_plane_size(struct gbm_bo *bo, size_t plane);
+gbm_bo_get_offset(struct gbm_bo *bo, size_t plane);
 
 uint32_t
+gbm_bo_get_plane_size(struct gbm_bo *bo, size_t plane);
+
+/* Deprecated */
+uint32_t
 gbm_bo_get_plane_stride(struct gbm_bo *bo, size_t plane);
+
+uint32_t
+gbm_bo_get_stride_for_plane(struct gbm_bo *bo, size_t plane);
 
 uint64_t
 gbm_bo_get_plane_format_modifier(struct gbm_bo *bo, size_t plane);

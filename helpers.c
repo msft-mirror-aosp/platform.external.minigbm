@@ -6,7 +6,6 @@
 
 #include <assert.h>
 #include <errno.h>
-#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -69,6 +68,13 @@ static const struct planar_layout triplanar_yuv_420_layout = {
 	.bytes_per_pixel = { 1, 1, 1 }
 };
 
+static const struct planar_layout biplanar_yuv_p010_layout = {
+	.num_planes = 2,
+	.horizontal_subsampling = { 1, 2 },
+	.vertical_subsampling = { 1, 2 },
+	.bytes_per_pixel = { 2, 4 }
+};
+
 // clang-format on
 
 static const struct planar_layout *layout_from_format(uint32_t format)
@@ -87,6 +93,9 @@ static const struct planar_layout *layout_from_format(uint32_t format)
 	case DRM_FORMAT_NV12:
 	case DRM_FORMAT_NV21:
 		return &biplanar_yuv_420_layout;
+
+	case DRM_FORMAT_P010:
+		return &biplanar_yuv_p010_layout;
 
 	case DRM_FORMAT_ABGR1555:
 	case DRM_FORMAT_ABGR4444:
@@ -261,16 +270,24 @@ int drv_dumb_bo_create(struct bo *bo, uint32_t width, uint32_t height, uint32_t 
 
 	aligned_width = width;
 	aligned_height = height;
-	if (format == DRM_FORMAT_YVU420_ANDROID) {
-		/*
-		 * Align width to 32 pixels, so chroma strides are 16 bytes as
-		 * Android requires.
-		 */
+	switch (format) {
+	case DRM_FORMAT_YVU420_ANDROID:
+		/* Align width to 32 pixels, so chroma strides are 16 bytes as
+		 * Android requires. */
 		aligned_width = ALIGN(width, 32);
-	}
-
-	if (format == DRM_FORMAT_YVU420_ANDROID || format == DRM_FORMAT_YVU420) {
+		/* Adjust the height to include room for chroma planes.
+		 *
+		 * HAL_PIXEL_FORMAT_YV12 requires that the buffer's height not
+		 * be aligned. */
+		aligned_height = 3 * DIV_ROUND_UP(bo->height, 2);
+		break;
+	case DRM_FORMAT_YVU420:
+	case DRM_FORMAT_NV12:
+		/* Adjust the height to include room for chroma planes */
 		aligned_height = 3 * DIV_ROUND_UP(height, 2);
+		break;
+	default:
+		break;
 	}
 
 	memset(&create_dumb, 0, sizeof(create_dumb));
@@ -282,7 +299,7 @@ int drv_dumb_bo_create(struct bo *bo, uint32_t width, uint32_t height, uint32_t 
 	ret = drmIoctl(bo->drv->fd, DRM_IOCTL_MODE_CREATE_DUMB, &create_dumb);
 	if (ret) {
 		drv_log("DRM_IOCTL_MODE_CREATE_DUMB failed (%d, %d)\n", bo->drv->fd, errno);
-		return ret;
+		return -errno;
 	}
 
 	drv_bo_from_format(bo, create_dumb.pitch, height, format);
@@ -305,7 +322,7 @@ int drv_dumb_bo_destroy(struct bo *bo)
 	ret = drmIoctl(bo->drv->fd, DRM_IOCTL_MODE_DESTROY_DUMB, &destroy_dumb);
 	if (ret) {
 		drv_log("DRM_IOCTL_MODE_DESTROY_DUMB failed (handle=%x)\n", bo->handles[0].u32);
-		return ret;
+		return -errno;
 	}
 
 	return 0;
@@ -332,7 +349,7 @@ int drv_gem_bo_destroy(struct bo *bo)
 		if (ret) {
 			drv_log("DRM_IOCTL_GEM_CLOSE failed (handle=%x) error %d\n",
 				bo->handles[plane].u32, ret);
-			error = ret;
+			error = -errno;
 		}
 	}
 
@@ -362,16 +379,10 @@ int drv_prime_bo_import(struct bo *bo, struct drv_import_fd_data *data)
 			 */
 			bo->num_planes = plane;
 			drv_gem_bo_destroy(bo);
-			return ret;
+			return -errno;
 		}
 
 		bo->handles[plane].u32 = prime_handle.handle;
-	}
-
-	for (plane = 0; plane < bo->num_planes; plane++) {
-		pthread_mutex_lock(&bo->drv->driver_lock);
-		drv_increment_reference_count(bo->drv, bo, plane);
-		pthread_mutex_unlock(&bo->drv->driver_lock);
 	}
 
 	return 0;
@@ -479,14 +490,14 @@ void drv_decrement_reference_count(struct driver *drv, struct bo *bo, size_t pla
 		drmHashInsert(drv->buffer_table, bo->handles[plane].u32, (void *)(num - 1));
 }
 
-uint32_t drv_log_base2(uint32_t value)
+void drv_add_combination(struct driver *drv, const uint32_t format,
+			 struct format_metadata *metadata, uint64_t use_flags)
 {
-	int ret = 0;
+	struct combination combo = { .format = format,
+				     .metadata = *metadata,
+				     .use_flags = use_flags };
 
-	while (value >>= 1)
-		++ret;
-
-	return ret;
+	drv_array_append(drv->combos, &combo);
 }
 
 void drv_add_combinations(struct driver *drv, const uint32_t *formats, uint32_t num_formats,
@@ -548,6 +559,7 @@ struct drv_array *drv_query_kms(struct driver *drv)
 		goto out;
 
 	for (i = 0; i < resources->count_planes; i++) {
+		plane_type = UINT64_MAX;
 		plane = drmModeGetPlane(drv->fd, resources->planes[i]);
 		if (!plane)
 			goto out;
@@ -668,4 +680,17 @@ uint64_t drv_pick_modifier(const uint64_t *modifiers, uint32_t count,
 	}
 
 	return DRM_FORMAT_MOD_LINEAR;
+}
+
+/*
+ * Search a list of modifiers to see if a given modifier is present
+ */
+bool drv_has_modifier(const uint64_t *list, uint32_t count, uint64_t modifier)
+{
+	uint32_t i;
+	for (i = 0; i < count; i++)
+		if (list[i] == modifier)
+			return true;
+
+	return false;
 }
