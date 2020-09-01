@@ -41,10 +41,6 @@ cc_defaults {
     ],
 
     cppflags: ["-std=c++14"],
-
-    shared_libs: [
-        "libdrm",
-    ],
 }
 
 cc_defaults {
@@ -80,6 +76,7 @@ cc_defaults {
 
     shared_libs: [
         "libcutils",
+        "libdrm",
         "libnativewindow",
         "libsync",
         "liblog",
@@ -88,10 +85,10 @@ cc_defaults {
     relative_install_path: "hw",
 }
 
-cc_library_host_shared {
-    name: "libgbm",
+cc_defaults {
+    name: "gbm_defaults",
+
     defaults: ["minigbm_defaults"],
-    static_libs: ["libdrm"],
 
     srcs: [
         "gbm.c",
@@ -99,6 +96,28 @@ cc_library_host_shared {
     ],
 
     export_include_dirs: ["."],
+}
+
+cc_library {
+    name: "libgbm",
+    defaults: ["gbm_defaults"],
+    host_supported: true,
+
+    target: {
+        host: {
+            // Avoid linking to another host copy of libdrm; this library will cause
+            // binary GPU drivers to be loaded from the host, which might be linked
+            // to a system copy of libdrm, which conflicts with the AOSP one
+            allow_undefined_symbols: true,
+            header_libs: ["libdrm"],
+        },
+        android: {
+            shared_libs: [
+                "libdrm",
+                "liblog"
+            ],
+        },
+    },
 }
 
 cc_library_static {
