@@ -1,8 +1,5 @@
-/*
- * Copyright 2020 The Chromium OS Authors. All rights reserved.
- * Use of this source code is governed by a BSD-style license that can be
- * found in the LICENSE file.
- */
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
 
 cc_defaults {
     name: "minigbm_defaults",
@@ -41,8 +38,12 @@ cc_defaults {
     ],
 
     cppflags: ["-std=c++14"],
+}
 
-    vendor: true,
+cc_defaults {
+    name: "minigbm_cros_gralloc_defaults",
+
+    defaults: ["minigbm_defaults"],
 
     header_libs: [
         "libhardware_headers",
@@ -58,6 +59,18 @@ cc_defaults {
         "libsystem_headers",
     ],
 
+    srcs: [
+        "cros_gralloc/cros_gralloc_buffer.cc",
+        "cros_gralloc/cros_gralloc_helpers.cc",
+        "cros_gralloc/cros_gralloc_driver.cc",
+    ],
+
+    static_libs: ["libarect"],
+
+    export_static_lib_headers: ["libarect"],
+
+    vendor: true,
+
     shared_libs: [
         "libcutils",
         "libdrm",
@@ -65,31 +78,12 @@ cc_defaults {
         "libsync",
         "liblog",
     ],
-
-    static_libs: ["libarect"],
-
-    export_static_lib_headers: ["libarect"],
-
-    relative_install_path: "hw",
 }
 
 cc_defaults {
-    name: "minigbm_gralloc_defaults",
+    name: "gbm_defaults",
 
     defaults: ["minigbm_defaults"],
-
-    srcs: [
-        "cros_gralloc/cros_gralloc_buffer.cc",
-        "cros_gralloc/cros_gralloc_helpers.cc",
-        "cros_gralloc/cros_gralloc_driver.cc",
-    ]
-}
-
-cc_library_static {
-    name: "libminigbm",
-    defaults: ["minigbm_defaults"],
-    shared_libs: ["liblog"],
-    static_libs: ["libdrm"],
 
     srcs: [
         "gbm.c",
@@ -99,9 +93,31 @@ cc_library_static {
     export_include_dirs: ["."],
 }
 
+cc_library {
+    name: "libgbm",
+    defaults: ["gbm_defaults"],
+    host_supported: true,
+
+    target: {
+        host: {
+            // Avoid linking to another host copy of libdrm; this library will cause
+            // binary GPU drivers to be loaded from the host, which might be linked
+            // to a system copy of libdrm, which conflicts with the AOSP one
+            allow_undefined_symbols: true,
+            header_libs: ["libdrm"],
+        },
+        android: {
+            shared_libs: [
+                "libdrm",
+                "liblog"
+            ],
+        },
+    },
+}
+
 cc_library_static {
-    name: "libminigbm_gralloc",
-    defaults: ["minigbm_gralloc_defaults"],
+    name: "libminigbm_cros_gralloc",
+    defaults: ["minigbm_cros_gralloc_defaults"],
     shared_libs: ["liblog"],
     static_libs: ["libdrm"],
 
@@ -110,13 +126,13 @@ cc_library_static {
 
 cc_library_shared {
     name: "gralloc.minigbm",
-    defaults: ["minigbm_gralloc_defaults"],
+    defaults: ["minigbm_cros_gralloc_defaults"],
     srcs: ["cros_gralloc/gralloc0/gralloc0.cc"],
 }
 
 cc_library_shared {
     name: "gralloc.minigbm_intel",
-    defaults: ["minigbm_gralloc_defaults"],
+    defaults: ["minigbm_cros_gralloc_defaults"],
     enabled: false,
     arch: {
         x86: {
@@ -132,7 +148,7 @@ cc_library_shared {
 
 cc_library_shared {
     name: "gralloc.minigbm_meson",
-    defaults: ["minigbm_gralloc_defaults"],
+    defaults: ["minigbm_cros_gralloc_defaults"],
     cflags: ["-DDRV_MESON"],
     srcs: ["cros_gralloc/gralloc0/gralloc0.cc"],
 }
