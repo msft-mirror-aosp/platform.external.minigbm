@@ -9,11 +9,31 @@
 #include <cstdlib>
 #include <fcntl.h>
 #include <sys/mman.h>
+#include <syscall.h>
 #include <xf86drm.h>
 
 #include "../drv_priv.h"
 #include "../helpers.h"
 #include "../util.h"
+
+int memfd_create_wrapper(const char *name, unsigned int flags)
+{
+	int fd;
+
+#if defined(HAVE_MEMFD_CREATE)
+	fd = memfd_create(name, flags);
+#elif defined(__NR_memfd_create)
+	fd = syscall(__NR_memfd_create, name, flags);
+#else
+	drv_log("Failed to create memfd '%s': memfd_create not available.", name);
+	return -1;
+#endif
+
+	if (fd == -1) {
+		drv_log("Failed to create memfd '%s': %s.\n", name, strerror(errno));
+	}
+	return fd;
+}
 
 cros_gralloc_driver::cros_gralloc_driver() : drv_(nullptr)
 {
@@ -55,7 +75,7 @@ int32_t cros_gralloc_driver::init()
 			if (asprintf(&node, str, DRM_DIR_NAME, j) < 0)
 				continue;
 
-			fd = open(node, O_RDWR, 0);
+			fd = open(node, O_RDWR | O_CLOEXEC);
 			free(node);
 
 			if (fd < 0)
@@ -96,13 +116,11 @@ bool cros_gralloc_driver::is_supported(const struct cros_gralloc_buffer_descript
 
 int32_t create_reserved_region(const std::string &buffer_name, uint64_t reserved_region_size)
 {
-	int32_t reserved_region_fd;
 	std::string reserved_region_name = buffer_name + " reserved region";
 
-	reserved_region_fd = memfd_create(reserved_region_name.c_str(), FD_CLOEXEC);
+	int32_t reserved_region_fd = memfd_create_wrapper(reserved_region_name.c_str(), FD_CLOEXEC);
 	if (reserved_region_fd == -1) {
-		drv_log("Failed to create reserved region fd: %s.\n", strerror(errno));
-		return -errno;
+		return -1;
 	}
 
 	if (ftruncate(reserved_region_fd, reserved_region_size)) {
@@ -191,7 +209,7 @@ int32_t cros_gralloc_driver::allocate(const struct cros_gralloc_buffer_descripto
 	num_bytes = ALIGN(num_bytes, sizeof(int));
 	num_ints = num_bytes - sizeof(native_handle_t) - num_fds;
 	/*
-	 * Malloc is used as handles are ultimetly destroyed via free in
+	 * Malloc is used as handles are ultimately destroyed via free in
 	 * native_handle_delete().
 	 */
 	hnd = static_cast<struct cros_gralloc_handle *>(malloc(num_bytes));
@@ -212,6 +230,7 @@ int32_t cros_gralloc_driver::allocate(const struct cros_gralloc_buffer_descripto
 	hnd->width = drv_bo_get_width(bo);
 	hnd->height = drv_bo_get_height(bo);
 	hnd->format = drv_bo_get_format(bo);
+	hnd->tiling = bo->meta.tiling;
 	hnd->format_modifier = drv_bo_get_plane_format_modifier(bo, 0);
 	hnd->use_flags = descriptor->use_flags;
 	bytes_per_pixel = drv_bytes_per_pixel_from_format(hnd->format, 0);
@@ -266,6 +285,7 @@ int32_t cros_gralloc_driver::retain(buffer_handle_t handle)
 		struct bo *bo;
 		struct drv_import_fd_data data;
 		data.format = hnd->format;
+		data.tiling = hnd->tiling;
 
 		data.width = hnd->width;
 		data.height = hnd->height;
