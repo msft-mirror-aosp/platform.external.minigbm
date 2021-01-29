@@ -7,22 +7,16 @@ cc_defaults {
     srcs: [
         "amdgpu.c",
         "drv.c",
-        "evdi.c",
+        "dumb_driver.c",
         "exynos.c",
         "helpers_array.c",
         "helpers.c",
         "i915.c",
-        "marvell.c",
         "mediatek.c",
-        "meson.c",
         "msm.c",
-        "nouveau.c",
-        "radeon.c",
         "rockchip.c",
         "tegra.c",
-        "udl.c",
         "vc4.c",
-        "vgem.c",
         "virtio_gpu.c",
     ],
 
@@ -78,6 +72,8 @@ cc_defaults {
         "libsync",
         "liblog",
     ],
+
+    relative_install_path: "hw",
 }
 
 cc_defaults {
@@ -104,7 +100,7 @@ cc_library {
             // binary GPU drivers to be loaded from the host, which might be linked
             // to a system copy of libdrm, which conflicts with the AOSP one
             allow_undefined_symbols: true,
-            header_libs: ["libdrm"],
+            header_libs: ["libdrm_headers"],
         },
         android: {
             shared_libs: [
@@ -113,6 +109,10 @@ cc_library {
             ],
         },
     },
+    apex_available: [
+        "//apex_available:platform",
+        "com.android.virt",
+    ],
 }
 
 cc_library_static {

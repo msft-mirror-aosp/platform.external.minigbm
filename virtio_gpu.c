@@ -6,6 +6,7 @@
 
 #include <assert.h>
 #include <errno.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -71,6 +72,7 @@ struct virtio_gpu_priv {
 	int caps_is_v2;
 	union virgl_caps caps;
 	int host_gbm_enabled;
+	atomic_int next_blob_id;
 };
 
 static uint32_t translate_format(uint32_t drm_fourcc)
@@ -88,7 +90,7 @@ static uint32_t translate_format(uint32_t drm_fourcc)
 	case DRM_FORMAT_ABGR8888:
 		return VIRGL_FORMAT_R8G8B8A8_UNORM;
 	case DRM_FORMAT_ABGR16161616F:
-		return VIRGL_FORMAT_R16G16B16A16_UNORM;
+		return VIRGL_FORMAT_R16G16B16A16_FLOAT;
 	case DRM_FORMAT_RGB565:
 		return VIRGL_FORMAT_B5G6R5_UNORM;
 	case DRM_FORMAT_R8:
@@ -467,7 +469,7 @@ static int virtio_virgl_bo_create(struct bo *bo, uint32_t width, uint32_t height
 	int ret;
 	size_t i;
 	uint32_t stride;
-	struct drm_virtgpu_resource_create res_create;
+	struct drm_virtgpu_resource_create res_create = { 0 };
 	struct bo_metadata emulated_metadata;
 
 	if (virtio_gpu_supports_combination_natively(bo->drv, format, use_flags)) {
@@ -497,7 +499,6 @@ static int virtio_virgl_bo_create(struct bo *bo, uint32_t width, uint32_t height
 	 * virglrenderer. When virglrenderer makes a resource, it will convert the target
 	 * enum to the equivalent one in GL and then bind the resource to that target.
 	 */
-	memset(&res_create, 0, sizeof(res_create));
 
 	res_create.target = PIPE_TEXTURE_2D;
 	res_create.format = translate_format(format);
@@ -527,11 +528,9 @@ static int virtio_virgl_bo_create(struct bo *bo, uint32_t width, uint32_t height
 static void *virtio_virgl_bo_map(struct bo *bo, struct vma *vma, size_t plane, uint32_t map_flags)
 {
 	int ret;
-	struct drm_virtgpu_map gem_map;
+	struct drm_virtgpu_map gem_map = { 0 };
 
-	memset(&gem_map, 0, sizeof(gem_map));
 	gem_map.handle = bo->handles[0].u32;
-
 	ret = drmIoctl(bo->drv->fd, DRM_IOCTL_VIRTGPU_MAP, &gem_map);
 	if (ret) {
 		drv_log("DRM_IOCTL_VIRTGPU_MAP failed with %s\n", strerror(errno));
@@ -546,10 +545,9 @@ static void *virtio_virgl_bo_map(struct bo *bo, struct vma *vma, size_t plane, u
 static int virtio_gpu_get_caps(struct driver *drv, union virgl_caps *caps, int *caps_is_v2)
 {
 	int ret;
-	struct drm_virtgpu_get_caps cap_args;
+	struct drm_virtgpu_get_caps cap_args = { 0 };
 
 	*caps_is_v2 = 0;
-	memset(&cap_args, 0, sizeof(cap_args));
 	cap_args.addr = (unsigned long long)caps;
 	if (features[feat_capset_fix].enabled) {
 		*caps_is_v2 = 1;
@@ -684,14 +682,18 @@ static int virtio_gpu_bo_create_blob(struct driver *drv, struct bo *bo)
 {
 	int ret;
 	uint32_t stride;
+	uint32_t cur_blob_id;
 	uint32_t cmd[VIRGL_PIPE_RES_CREATE_SIZE + 1] = { 0 };
 	struct drm_virtgpu_resource_create_blob drm_rc_blob = { 0 };
+	struct virtio_gpu_priv *priv = (struct virtio_gpu_priv *)drv->priv;
 
-	uint32_t blob_flags = VIRTGPU_BLOB_FLAG_USE_MAPPABLE | VIRTGPU_BLOB_FLAG_USE_SHAREABLE;
-	if (bo->meta.use_flags & BO_USE_NON_GPU_HW) {
+	uint32_t blob_flags = VIRTGPU_BLOB_FLAG_USE_SHAREABLE;
+	if (bo->meta.use_flags & BO_USE_SW_MASK)
+		blob_flags |= VIRTGPU_BLOB_FLAG_USE_MAPPABLE;
+	if (bo->meta.use_flags & BO_USE_NON_GPU_HW)
 		blob_flags |= VIRTGPU_BLOB_FLAG_USE_CROSS_DEVICE;
-	}
 
+	cur_blob_id = atomic_fetch_add(&priv->next_blob_id, 1);
 	stride = drv_stride_from_format(bo->meta.format, bo->meta.width, 0);
 	drv_bo_from_format(bo, stride, bo->meta.height, bo->meta.format);
 	bo->meta.total_size = ALIGN(bo->meta.total_size, PAGE_SIZE);
@@ -704,12 +706,14 @@ static int virtio_gpu_bo_create_blob(struct driver *drv, struct bo *bo)
 	cmd[VIRGL_PIPE_RES_CREATE_FORMAT] = translate_format(bo->meta.format);
 	cmd[VIRGL_PIPE_RES_CREATE_BIND] = use_flags_to_bind(bo->meta.use_flags);
 	cmd[VIRGL_PIPE_RES_CREATE_DEPTH] = 1;
+	cmd[VIRGL_PIPE_RES_CREATE_BLOB_ID] = cur_blob_id;
 
 	drm_rc_blob.cmd = (uint64_t)&cmd;
 	drm_rc_blob.cmd_size = 4 * (VIRGL_PIPE_RES_CREATE_SIZE + 1);
 	drm_rc_blob.size = bo->meta.total_size;
 	drm_rc_blob.blob_mem = VIRTGPU_BLOB_MEM_HOST3D;
 	drm_rc_blob.blob_flags = blob_flags;
+	drm_rc_blob.blob_id = cur_blob_id;
 
 	ret = drmIoctl(drv->fd, DRM_IOCTL_VIRTGPU_RESOURCE_CREATE_BLOB, &drm_rc_blob);
 	if (ret < 0) {
@@ -736,19 +740,23 @@ static bool should_use_blob(struct driver *drv, uint32_t format, uint64_t use_fl
 	if (!priv->host_gbm_enabled)
 		return false;
 
-	// Focus on non-GPU apps for now
-	if (use_flags & (BO_USE_RENDERING | BO_USE_TEXTURE))
+	// Use regular resources if only the GPU needs efficient access
+	if (!(use_flags &
+	      (BO_USE_SW_READ_OFTEN | BO_USE_SW_WRITE_OFTEN | BO_USE_LINEAR | BO_USE_NON_GPU_HW)))
 		return false;
 
-	// Simple, strictly defined formats for now
-	if (format != DRM_FORMAT_YVU420_ANDROID && format != DRM_FORMAT_R8)
-		return false;
-
-	if (use_flags &
-	    (BO_USE_SW_READ_OFTEN | BO_USE_SW_WRITE_OFTEN | BO_USE_LINEAR | BO_USE_NON_GPU_HW))
+	switch (format) {
+	case DRM_FORMAT_YVU420_ANDROID:
+	case DRM_FORMAT_R8:
+		// Formats with strictly defined strides are supported
 		return true;
-
-	return false;
+	case DRM_FORMAT_NV12:
+		// Knowing buffer metadata at buffer creation isn't yet supported, so buffers
+		// can't be properly mapped into the guest.
+		return (use_flags & BO_USE_SW_MASK) == 0;
+	default:
+		return false;
+	}
 }
 
 static int virtio_gpu_bo_create(struct bo *bo, uint32_t width, uint32_t height, uint32_t format,
@@ -784,8 +792,8 @@ static int virtio_gpu_bo_invalidate(struct bo *bo, struct mapping *mapping)
 {
 	int ret;
 	size_t i;
-	struct drm_virtgpu_3d_transfer_from_host xfer;
-	struct drm_virtgpu_3d_wait waitcmd;
+	struct drm_virtgpu_3d_transfer_from_host xfer = { 0 };
+	struct drm_virtgpu_3d_wait waitcmd = { 0 };
 	struct virtio_transfers_params xfer_params;
 	struct virtio_gpu_priv *priv = (struct virtio_gpu_priv *)bo->drv->priv;
 
@@ -801,7 +809,6 @@ static int virtio_gpu_bo_invalidate(struct bo *bo, struct mapping *mapping)
 	    (bo->meta.tiling & VIRTGPU_BLOB_FLAG_USE_MAPPABLE))
 		return 0;
 
-	memset(&xfer, 0, sizeof(xfer));
 	xfer.bo_handle = mapping->vma->handle;
 
 	if (mapping->rect.x || mapping->rect.y) {
@@ -858,7 +865,6 @@ static int virtio_gpu_bo_invalidate(struct bo *bo, struct mapping *mapping)
 	// The transfer needs to complete before invalidate returns so that any host changes
 	// are visible and to ensure the host doesn't overwrite subsequent guest changes.
 	// TODO(b/136733358): Support returning fences from transfers
-	memset(&waitcmd, 0, sizeof(waitcmd));
 	waitcmd.handle = mapping->vma->handle;
 	ret = drmIoctl(bo->drv->fd, DRM_IOCTL_VIRTGPU_WAIT, &waitcmd);
 	if (ret) {
@@ -873,8 +879,8 @@ static int virtio_gpu_bo_flush(struct bo *bo, struct mapping *mapping)
 {
 	int ret;
 	size_t i;
-	struct drm_virtgpu_3d_transfer_to_host xfer;
-	struct drm_virtgpu_3d_wait waitcmd;
+	struct drm_virtgpu_3d_transfer_to_host xfer = { 0 };
+	struct drm_virtgpu_3d_wait waitcmd = { 0 };
 	struct virtio_transfers_params xfer_params;
 	struct virtio_gpu_priv *priv = (struct virtio_gpu_priv *)bo->drv->priv;
 
@@ -888,7 +894,6 @@ static int virtio_gpu_bo_flush(struct bo *bo, struct mapping *mapping)
 	    (bo->meta.tiling & VIRTGPU_BLOB_FLAG_USE_MAPPABLE))
 		return 0;
 
-	memset(&xfer, 0, sizeof(xfer));
 	xfer.bo_handle = mapping->vma->handle;
 
 	if (mapping->rect.x || mapping->rect.y) {
@@ -941,7 +946,6 @@ static int virtio_gpu_bo_flush(struct bo *bo, struct mapping *mapping)
 	// buffer, we need to wait for the transfer to complete for consistency.
 	// TODO(b/136733358): Support returning fences from transfers
 	if (bo->meta.use_flags & BO_USE_NON_GPU_HW) {
-		memset(&waitcmd, 0, sizeof(waitcmd));
 		waitcmd.handle = mapping->vma->handle;
 
 		ret = drmIoctl(bo->drv->fd, DRM_IOCTL_VIRTGPU_WAIT, &waitcmd);
@@ -958,9 +962,10 @@ static uint32_t virtio_gpu_resolve_format(struct driver *drv, uint32_t format, u
 {
 	switch (format) {
 	case DRM_FORMAT_FLEX_IMPLEMENTATION_DEFINED:
-		// TODO(b/157902551): Cuttlefish's current camera hal implementation
-		// requires that the flex format is RGBA. Revert this edit and use YUV
-		// format when Cuttlefish switches to the newer camera hal.
+		/* Camera subsystem requires NV12. */
+		if (use_flags & (BO_USE_CAMERA_READ | BO_USE_CAMERA_WRITE))
+			return DRM_FORMAT_NV12;
+		/*HACK: See b/28671744 */
 		return DRM_FORMAT_XBGR8888;
 	case DRM_FORMAT_FLEX_YCbCr_420_888:
 		/*
@@ -980,12 +985,11 @@ static int virtio_gpu_resource_info(struct bo *bo, uint32_t strides[DRV_MAX_PLAN
 				    uint32_t offsets[DRV_MAX_PLANES])
 {
 	int ret;
-	struct drm_virtgpu_resource_info res_info;
+	struct drm_virtgpu_resource_info res_info = { 0 };
 
 	if (!features[feat_3d].enabled)
 		return 0;
 
-	memset(&res_info, 0, sizeof(res_info));
 	res_info.bo_handle = bo->handles[0].u32;
 	ret = drmIoctl(bo->drv->fd, DRM_IOCTL_VIRTGPU_RESOURCE_INFO, &res_info);
 	if (ret) {

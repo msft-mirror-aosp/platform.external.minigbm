@@ -189,7 +189,8 @@ size_t drv_num_planes_from_modifier(struct driver *drv, uint32_t format, uint64_
 	if (!planes)
 		return 0;
 
-	if (drv->backend->num_planes_from_modifier && modifier != DRM_FORMAT_MOD_INVALID)
+	if (drv->backend->num_planes_from_modifier && modifier != DRM_FORMAT_MOD_INVALID &&
+	    modifier != DRM_FORMAT_MOD_LINEAR)
 		return drv->backend->num_planes_from_modifier(drv, format, modifier);
 
 	return planes;
@@ -312,7 +313,7 @@ int drv_dumb_bo_create_ex(struct bo *bo, uint32_t width, uint32_t height, uint32
 	int ret;
 	size_t plane;
 	uint32_t aligned_width, aligned_height;
-	struct drm_mode_create_dumb create_dumb;
+	struct drm_mode_create_dumb create_dumb = { 0 };
 
 	aligned_width = width;
 	aligned_height = height;
@@ -345,7 +346,6 @@ int drv_dumb_bo_create_ex(struct bo *bo, uint32_t width, uint32_t height, uint32
 		break;
 	}
 
-	memset(&create_dumb, 0, sizeof(create_dumb));
 	if (quirks & BO_QUIRK_DUMB32BPP) {
 		aligned_width =
 		    DIV_ROUND_UP(aligned_width * layout_from_format(format)->bytes_per_pixel[0], 4);
@@ -380,12 +380,10 @@ int drv_dumb_bo_create(struct bo *bo, uint32_t width, uint32_t height, uint32_t 
 
 int drv_dumb_bo_destroy(struct bo *bo)
 {
-	struct drm_mode_destroy_dumb destroy_dumb;
 	int ret;
+	struct drm_mode_destroy_dumb destroy_dumb = { 0 };
 
-	memset(&destroy_dumb, 0, sizeof(destroy_dumb));
 	destroy_dumb.handle = bo->handles[0].u32;
-
 	ret = drmIoctl(bo->drv->fd, DRM_IOCTL_MODE_DESTROY_DUMB, &destroy_dumb);
 	if (ret) {
 		drv_log("DRM_IOCTL_MODE_DESTROY_DUMB failed (handle=%x)\n", bo->handles[0].u32);
