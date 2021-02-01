@@ -72,6 +72,8 @@ cc_defaults {
         "libsync",
         "liblog",
     ],
+
+    relative_install_path: "hw",
 }
 
 cc_defaults {
@@ -107,6 +109,10 @@ cc_library {
             ],
         },
     },
+    apex_available: [
+        "//apex_available:platform",
+        "com.android.virt",
+    ],
 }
 
 cc_library_static {
