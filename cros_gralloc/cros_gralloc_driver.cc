@@ -45,21 +45,16 @@ int memfd_create_wrapper(const char *name, unsigned int flags)
 	return fd;
 }
 
-cros_gralloc_driver::cros_gralloc_driver() : drv_(nullptr)
+cros_gralloc_driver *cros_gralloc_driver::get_instance()
 {
-}
+	static cros_gralloc_driver s_instance;
 
-cros_gralloc_driver::~cros_gralloc_driver()
-{
-	buffers_.clear();
-	handles_.clear();
-
-	if (drv_) {
-		int fd = drv_get_fd(drv_);
-		drv_destroy(drv_);
-		drv_ = nullptr;
-		close(fd);
+	if (!s_instance.is_initialized()) {
+		drv_log("Failed to initialize driver.\n");
+		return nullptr;
 	}
+
+	return &s_instance;
 }
 
 static struct driver *init_try_node(int idx, char const *str)
@@ -84,7 +79,7 @@ static struct driver *init_try_node(int idx, char const *str)
 	return drv;
 }
 
-int32_t cros_gralloc_driver::init()
+cros_gralloc_driver::cros_gralloc_driver()
 {
 	/*
 	 * Create a driver from render nodes first, then try card
@@ -105,17 +100,33 @@ int32_t cros_gralloc_driver::init()
 	for (uint32_t i = min_render_node; i < max_render_node; i++) {
 		drv_ = init_try_node(i, render_nodes_fmt);
 		if (drv_)
-			return 0;
+			return;
 	}
 
 	// Try card nodes... for vkms mostly.
 	for (uint32_t i = min_card_node; i < max_card_node; i++) {
 		drv_ = init_try_node(i, card_nodes_fmt);
 		if (drv_)
-			return 0;
+			return;
 	}
+}
 
-	return -ENODEV;
+cros_gralloc_driver::~cros_gralloc_driver()
+{
+	buffers_.clear();
+	handles_.clear();
+
+	if (drv_) {
+		int fd = drv_get_fd(drv_);
+		drv_destroy(drv_);
+		drv_ = nullptr;
+		close(fd);
+	}
+}
+
+bool cros_gralloc_driver::is_initialized()
+{
+	return drv_ != nullptr;
 }
 
 bool cros_gralloc_driver::is_supported(const struct cros_gralloc_buffer_descriptor *descriptor)
@@ -170,14 +181,6 @@ int32_t cros_gralloc_driver::allocate(const struct cros_gralloc_buffer_descripto
 
 	resolved_format = drv_resolve_format(drv_, descriptor->drm_format, descriptor->use_flags);
 	use_flags = descriptor->use_flags;
-	/*
-	 * TODO(b/79682290): ARC++ assumes NV12 is always linear and doesn't
-	 * send modifiers across Wayland protocol, so we or in the
-	 * BO_USE_LINEAR flag here. We need to fix ARC++ to allocate and work
-	 * with tiled buffers.
-	 */
-	if (resolved_format == DRM_FORMAT_NV12)
-		use_flags |= BO_USE_LINEAR;
 
 	/*
 	 * This unmask is a backup in the case DRM_FORMAT_FLEX_IMPLEMENTATION_DEFINED is resolved
@@ -217,7 +220,7 @@ int32_t cros_gralloc_driver::allocate(const struct cros_gralloc_buffer_descripto
 	 * native_handle_clone() copies data based on hnd->base.numInts.
 	 */
 	num_bytes = ALIGN(num_bytes, sizeof(int));
-	num_ints = num_bytes - sizeof(native_handle_t) - num_fds;
+	num_ints = ((num_bytes - sizeof(native_handle_t)) / sizeof(int)) - num_fds;
 
 	hnd =
 	    reinterpret_cast<struct cros_gralloc_handle *>(native_handle_create(num_fds, num_ints));
@@ -473,7 +476,8 @@ int32_t cros_gralloc_driver::get_backing_store(buffer_handle_t handle, uint64_t 
 }
 
 int32_t cros_gralloc_driver::resource_info(buffer_handle_t handle, uint32_t strides[DRV_MAX_PLANES],
-					   uint32_t offsets[DRV_MAX_PLANES])
+					   uint32_t offsets[DRV_MAX_PLANES],
+					   uint64_t *format_modifier)
 {
 	std::lock_guard<std::mutex> lock(mutex_);
 
@@ -489,7 +493,7 @@ int32_t cros_gralloc_driver::resource_info(buffer_handle_t handle, uint32_t stri
 		return -EINVAL;
 	}
 
-	return buffer->resource_info(strides, offsets);
+	return buffer->resource_info(strides, offsets, format_modifier);
 }
 
 int32_t cros_gralloc_driver::get_reserved_region(buffer_handle_t handle,
