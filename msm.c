@@ -66,6 +66,24 @@ static uint32_t get_ubwc_meta_size(uint32_t width, uint32_t height, uint32_t til
 	return ALIGN(macrotile_width * macrotile_height, PLANE_SIZE_ALIGN);
 }
 
+static unsigned get_pitch_alignment(struct bo *bo)
+{
+	switch (bo->meta.format) {
+	case DRM_FORMAT_NV12:
+		return VENUS_STRIDE_ALIGN;
+	case DRM_FORMAT_YVU420:
+	case DRM_FORMAT_YVU420_ANDROID:
+		/* TODO other YUV formats? */
+		/* Something (in the video stack?) assumes the U/V planes can use
+		 * half the pitch as the Y plane.. to componsate, double the
+		 * alignment:
+		 */
+		return 2 * DEFAULT_ALIGNMENT;
+	default:
+		return DEFAULT_ALIGNMENT;
+	}
+}
+
 static void msm_calculate_layout(struct bo *bo)
 {
 	uint32_t width, height;
@@ -108,7 +126,7 @@ static void msm_calculate_layout(struct bo *bo)
 	} else {
 		uint32_t stride, alignw, alignh;
 
-		alignw = ALIGN(width, DEFAULT_ALIGNMENT);
+		alignw = ALIGN(width, get_pitch_alignment(bo));
 		/* HAL_PIXEL_FORMAT_YV12 requires that the buffer's height not be aligned.
 			DRM_FORMAT_R8 of height one is used for JPEG camera output, so don't
 			height align that. */
@@ -205,7 +223,14 @@ static int msm_init(struct driver *drv)
 	struct format_metadata metadata;
 	uint64_t render_use_flags = BO_USE_RENDER_MASK | BO_USE_SCANOUT;
 	uint64_t texture_use_flags = BO_USE_TEXTURE_MASK | BO_USE_HW_VIDEO_DECODER;
-	uint64_t sw_flags = (BO_USE_RENDERSCRIPT | BO_USE_SW_MASK | BO_USE_LINEAR);
+	/*
+	 * NOTE: we actually could use tiled in the BO_USE_FRONT_RENDERING case,
+	 * if we had a modifier for tiled-but-not-compressed.  But we *cannot* use
+	 * compressed in this case because the UBWC flags/meta data can be out of
+	 * sync with pixel data while the GPU is writing a frame out to memory.
+	 */
+	uint64_t sw_flags =
+	    (BO_USE_RENDERSCRIPT | BO_USE_SW_MASK | BO_USE_LINEAR | BO_USE_FRONT_RENDERING);
 
 	drv_add_combinations(drv, render_target_formats, ARRAY_SIZE(render_target_formats),
 			     &LINEAR_METADATA, render_use_flags);
@@ -227,12 +252,21 @@ static int msm_init(struct driver *drv)
 			       BO_USE_CAMERA_READ | BO_USE_CAMERA_WRITE | BO_USE_HW_VIDEO_DECODER |
 				   BO_USE_HW_VIDEO_ENCODER);
 
+	/*
+	 * Android also frequently requests YV12 formats for some camera implementations
+	 * (including the external provider implmenetation). So mark it as well as valid
+	 * for camera display and encoding.
+	 */
+	drv_modify_combination(drv, DRM_FORMAT_YVU420_ANDROID, &LINEAR_METADATA,
+			       BO_USE_CAMERA_READ | BO_USE_CAMERA_WRITE | BO_USE_SCANOUT |
+				   BO_USE_HW_VIDEO_ENCODER);
+
 	/* Android CTS tests require this. */
 	drv_add_combination(drv, DRM_FORMAT_BGR888, &LINEAR_METADATA, BO_USE_SW_MASK);
 
 	drv_modify_linear_combinations(drv);
 
-	if (should_avoid_ubwc())
+	if (should_avoid_ubwc() || !drv->compression)
 		return 0;
 
 	metadata.tiling = MSM_UBWC_TILING;
@@ -249,8 +283,7 @@ static int msm_init(struct driver *drv)
 				  &metadata, texture_use_flags);
 
 	drv_modify_combination(drv, DRM_FORMAT_NV12, &metadata,
-			       BO_USE_CAMERA_READ | BO_USE_CAMERA_WRITE | BO_USE_SCANOUT |
-				   BO_USE_HW_VIDEO_ENCODER);
+			       BO_USE_SCANOUT | BO_USE_HW_VIDEO_ENCODER);
 
 	return 0;
 }
@@ -278,11 +311,10 @@ static int msm_bo_create_for_modifier(struct bo *bo, uint32_t width, uint32_t he
 	 * Though we use only one plane, we need to set handle for
 	 * all planes to pass kernel checks
 	 */
-	for (i = 0; i < bo->meta.num_planes; i++) {
+	for (i = 0; i < bo->meta.num_planes; i++)
 		bo->handles[i].u32 = req.handle;
-		bo->meta.format_modifiers[i] = modifier;
-	}
 
+	bo->meta.format_modifier = modifier;
 	return 0;
 }
 
@@ -296,6 +328,9 @@ static int msm_bo_create_with_modifiers(struct bo *bo, uint32_t width, uint32_t 
 
 	uint64_t modifier =
 	    drv_pick_modifier(modifiers, count, modifier_order, ARRAY_SIZE(modifier_order));
+
+	if (!bo->drv->compression && modifier == DRM_FORMAT_MOD_QCOM_COMPRESSED)
+		modifier = DRM_FORMAT_MOD_LINEAR;
 
 	return msm_bo_create_for_modifier(bo, width, height, format, modifier);
 }
@@ -331,22 +366,6 @@ static void *msm_bo_map(struct bo *bo, struct vma *vma, size_t plane, uint32_t m
 		    req.offset);
 }
 
-static uint32_t msm_resolve_format(struct driver *drv, uint32_t format, uint64_t use_flags)
-{
-	switch (format) {
-	case DRM_FORMAT_FLEX_IMPLEMENTATION_DEFINED:
-		/* Camera subsystem requires NV12. */
-		if (use_flags & (BO_USE_CAMERA_READ | BO_USE_CAMERA_WRITE))
-			return DRM_FORMAT_NV12;
-		/*HACK: See b/28671744 */
-		return DRM_FORMAT_XBGR8888;
-	case DRM_FORMAT_FLEX_YCbCr_420_888:
-		return DRM_FORMAT_NV12;
-	default:
-		return format;
-	}
-}
-
 const struct backend backend_msm = {
 	.name = "msm",
 	.init = msm_init,
@@ -356,6 +375,6 @@ const struct backend backend_msm = {
 	.bo_import = drv_prime_bo_import,
 	.bo_map = msm_bo_map,
 	.bo_unmap = drv_bo_munmap,
-	.resolve_format = msm_resolve_format,
+	.resolve_format = drv_resolve_format_helper,
 };
 #endif /* DRV_MSM */

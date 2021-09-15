@@ -1,8 +1,39 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-cc_defaults {
-    name: "minigbm_defaults",
+package {
+    default_applicable_licenses: ["external_minigbm_license"],
+}
+
+// Added automatically by a large-scale-change that took the approach of
+// 'apply every license found to every target'. While this makes sure we respect
+// every license restriction, it may not be entirely correct.
+//
+// e.g. GPL in an MIT project might only apply to the contrib/ directory.
+//
+// Please consider splitting the single license below into multiple licenses,
+// taking care not to lose any license_kind information, and overriding the
+// default license using the 'licenses: [...]' property on targets as needed.
+//
+// For unused files, consider creating a 'fileGroup' with "//visibility:private"
+// to attach the license to, and including a comment whether the files may be
+// used in the current project.
+// See: http://go/android-license-faq
+license {
+    name: "external_minigbm_license",
+    visibility: [":__subpackages__"],
+    license_kinds: [
+        "SPDX-license-identifier-Apache-2.0",
+        "SPDX-license-identifier-BSD",
+        "SPDX-license-identifier-MIT",
+    ],
+    license_text: [
+        "LICENSE",
+    ],
+}
+
+filegroup {
+    name: "minigbm_core_files",
 
     srcs: [
         "amdgpu.c",
@@ -15,10 +46,30 @@ cc_defaults {
         "mediatek.c",
         "msm.c",
         "rockchip.c",
-        "tegra.c",
         "vc4.c",
-        "virtio_gpu.c",
+        "virtgpu.c",
+        "virtgpu_cross_domain.c",
+        "virtgpu_virgl.c",
     ],
+}
+
+filegroup {
+    name: "minigbm_gralloc_common_files",
+
+    srcs: [
+        "cros_gralloc/cros_gralloc_buffer.cc",
+        "cros_gralloc/cros_gralloc_helpers.cc",
+        "cros_gralloc/cros_gralloc_driver.cc",
+    ],
+}
+
+filegroup {
+    name: "minigbm_gralloc0_files",
+    srcs: ["cros_gralloc/gralloc0/gralloc0.cc"],
+}
+
+cc_defaults {
+    name: "minigbm_defaults",
 
     cflags: [
         "-D_GNU_SOURCE=1",
@@ -30,8 +81,13 @@ cc_defaults {
         "-Wcast-align",
         "-Wno-unused-parameter",
     ],
+}
 
-    cppflags: ["-std=c++14"],
+cc_library_headers {
+    name: "minigbm_headers",
+    host_supported: true,
+    vendor_available: true,
+    export_include_dirs: ["."],
 }
 
 cc_defaults {
@@ -42,26 +98,11 @@ cc_defaults {
     header_libs: [
         "libhardware_headers",
         "libnativebase_headers",
-        "libnativewindow_headers",
         "libsystem_headers",
-    ],
-
-    export_header_lib_headers: [
-        "libhardware_headers",
-        "libnativebase_headers",
-        "libnativewindow_headers",
-        "libsystem_headers",
-    ],
-
-    srcs: [
-        "cros_gralloc/cros_gralloc_buffer.cc",
-        "cros_gralloc/cros_gralloc_helpers.cc",
-        "cros_gralloc/cros_gralloc_driver.cc",
+        "minigbm_headers",
     ],
 
     static_libs: ["libarect"],
-
-    export_static_lib_headers: ["libarect"],
 
     vendor: true,
 
@@ -75,22 +116,34 @@ cc_defaults {
 }
 
 cc_defaults {
-    name: "gbm_defaults",
+    name: "minigbm_cros_gralloc_library_defaults",
 
-    defaults: ["minigbm_defaults"],
-
+    defaults: ["minigbm_cros_gralloc_defaults"],
     srcs: [
-        "gbm.c",
-        "gbm_helpers.c",
+        ":minigbm_core_files",
+        ":minigbm_gralloc_common_files",
     ],
+}
 
-    export_include_dirs: ["."],
+cc_defaults {
+    name: "minigbm_cros_gralloc0_defaults",
+
+    defaults: ["minigbm_cros_gralloc_defaults"],
+    relative_install_path: "hw",
+
+    srcs: [":minigbm_gralloc0_files"],
 }
 
 cc_library {
     name: "libgbm",
-    defaults: ["gbm_defaults"],
+    defaults: ["minigbm_defaults"],
     host_supported: true,
+
+    srcs: [
+        ":minigbm_core_files",
+        "gbm.c",
+        "gbm_helpers.c",
+    ],
 
     target: {
         host: {
@@ -107,26 +160,31 @@ cc_library {
             ],
         },
     },
-}
-
-cc_library_static {
-    name: "libminigbm_cros_gralloc",
-    defaults: ["minigbm_cros_gralloc_defaults"],
-    shared_libs: ["liblog"],
-    static_libs: ["libdrm"],
+    apex_available: [
+        "//apex_available:platform",
+        "com.android.virt",
+    ],
 
     export_include_dirs: ["."],
 }
 
+// Generic
 cc_library_shared {
-    name: "gralloc.minigbm",
-    defaults: ["minigbm_cros_gralloc_defaults"],
-    srcs: ["cros_gralloc/gralloc0/gralloc0.cc"],
+    name: "libminigbm_gralloc",
+    defaults: ["minigbm_cros_gralloc_library_defaults"],
 }
 
 cc_library_shared {
-    name: "gralloc.minigbm_intel",
-    defaults: ["minigbm_cros_gralloc_defaults"],
+    name: "gralloc.minigbm",
+    defaults: ["minigbm_cros_gralloc0_defaults"],
+    shared_libs: ["libminigbm_gralloc"],
+}
+
+// Intel
+cc_library_shared {
+    name: "libminigbm_gralloc_intel",
+    defaults: ["minigbm_cros_gralloc_library_defaults"],
+    cflags: ["-DDRV_I915"],
     enabled: false,
     arch: {
         x86: {
@@ -136,13 +194,45 @@ cc_library_shared {
             enabled: true,
         },
     },
-    cflags: ["-DDRV_I915"],
-    srcs: ["cros_gralloc/gralloc0/gralloc0.cc"],
+}
+
+cc_library_shared {
+    name: "gralloc.minigbm_intel",
+    defaults: ["minigbm_cros_gralloc0_defaults"],
+    shared_libs: ["libminigbm_gralloc_intel"],
+    enabled: false,
+    arch: {
+        x86: {
+            enabled: true,
+        },
+        x86_64: {
+            enabled: true,
+        },
+    },
+}
+
+// Meson
+cc_library_shared {
+    name: "libminigbm_gralloc_meson",
+    defaults: ["minigbm_cros_gralloc_library_defaults"],
+    cflags: ["-DDRV_MESON"],
 }
 
 cc_library_shared {
     name: "gralloc.minigbm_meson",
-    defaults: ["minigbm_cros_gralloc_defaults"],
-    cflags: ["-DDRV_MESON"],
-    srcs: ["cros_gralloc/gralloc0/gralloc0.cc"],
+    defaults: ["minigbm_cros_gralloc0_defaults"],
+    shared_libs: ["libminigbm_gralloc_meson"],
+}
+
+// MSM
+cc_library_shared {
+    name: "libminigbm_gralloc_msm",
+    defaults: ["minigbm_cros_gralloc_library_defaults"],
+    cflags: ["-DDRV_MSM"],
+}
+
+cc_library_shared {
+    name: "gralloc.minigbm_msm",
+    defaults: ["minigbm_cros_gralloc0_defaults"],
+    shared_libs: ["libminigbm_gralloc_msm"],
 }
