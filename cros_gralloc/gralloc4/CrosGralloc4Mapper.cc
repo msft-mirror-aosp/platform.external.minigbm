@@ -16,8 +16,6 @@
 #include "cros_gralloc/cros_gralloc_helpers.h"
 #include "cros_gralloc/gralloc4/CrosGralloc4Utils.h"
 
-#include "helpers.h"
-
 using aidl::android::hardware::graphics::common::BlendMode;
 using aidl::android::hardware::graphics::common::Dataspace;
 using aidl::android::hardware::graphics::common::PlaneLayout;
@@ -392,13 +390,7 @@ Return<void> CrosGralloc4Mapper::isSupported(const BufferDescriptorInfo& descrip
         return Void();
     }
 
-    bool supported = mDriver->is_supported(&crosDescriptor);
-    if (!supported) {
-        crosDescriptor.use_flags &= ~BO_USE_SCANOUT;
-        supported = mDriver->is_supported(&crosDescriptor);
-    }
-
-    hidlCb(Error::NONE, supported);
+    hidlCb(Error::NONE, mDriver->is_supported(&crosDescriptor));
     return Void();
 }
 
