@@ -16,7 +16,10 @@
 class cros_gralloc_driver
 {
       public:
-	static cros_gralloc_driver *get_instance();
+	cros_gralloc_driver();
+	~cros_gralloc_driver();
+
+	int32_t init();
 	bool is_supported(const struct cros_gralloc_buffer_descriptor *descriptor);
 	int32_t allocate(const struct cros_gralloc_buffer_descriptor *descriptor,
 			 buffer_handle_t *out_handle);
@@ -39,21 +42,17 @@ class cros_gralloc_driver
 	int32_t get_reserved_region(buffer_handle_t handle, void **reserved_region_addr,
 				    uint64_t *reserved_region_size);
 
-	uint32_t get_resolved_drm_format(uint32_t drm_format, uint64_t use_flags);
+	uint32_t get_resolved_drm_format(uint32_t drm_format, uint64_t usage);
 
 	void for_each_handle(const std::function<void(cros_gralloc_handle_t)> &function);
 
       private:
-	cros_gralloc_driver();
-	~cros_gralloc_driver();
-	bool is_initialized();
+	cros_gralloc_driver(cros_gralloc_driver const &);
+	cros_gralloc_driver operator=(cros_gralloc_driver const &);
 	cros_gralloc_buffer *get_buffer(cros_gralloc_handle_t hnd);
 	void emplace_buffer(struct bo *bo, struct cros_gralloc_handle *hnd);
-	bool
-	get_resolved_format_and_use_flags(const struct cros_gralloc_buffer_descriptor *descriptor,
-					  uint32_t *out_format, uint64_t *out_use_flags);
 
-	struct driver *drv_ = nullptr;
+	struct driver *drv_;
 	std::mutex mutex_;
 	std::unordered_map<uint32_t, cros_gralloc_buffer *> buffers_;
 	std::unordered_map<cros_gralloc_handle_t, std::pair<cros_gralloc_buffer *, int32_t>>
