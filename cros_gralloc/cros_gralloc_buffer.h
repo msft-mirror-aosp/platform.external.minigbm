@@ -7,6 +7,7 @@
 #ifndef CROS_GRALLOC_BUFFER_H
 #define CROS_GRALLOC_BUFFER_H
 
+#include "../drv.h"
 #include "cros_gralloc_helpers.h"
 
 class cros_gralloc_buffer
