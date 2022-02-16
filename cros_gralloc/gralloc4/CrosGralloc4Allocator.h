@@ -11,12 +11,10 @@
 
 class CrosGralloc4Allocator : public android::hardware::graphics::allocator::V4_0::IAllocator {
   public:
-    CrosGralloc4Allocator() = default;
+    CrosGralloc4Allocator();
 
     android::hardware::Return<void> allocate(const android::hardware::hidl_vec<uint8_t>& descriptor,
                                              uint32_t count, allocate_cb hidl_cb) override;
-
-    android::hardware::graphics::mapper::V4_0::Error init();
 
   private:
     android::hardware::graphics::mapper::V4_0::Error allocate(
@@ -24,5 +22,5 @@ class CrosGralloc4Allocator : public android::hardware::graphics::allocator::V4_
                     description,
             uint32_t* outStride, android::hardware::hidl_handle* outHandle);
 
-    cros_gralloc_driver* mDriver = nullptr;
+    std::unique_ptr<cros_gralloc_driver> mDriver;
 };
