@@ -16,6 +16,9 @@ ifdef DRV_AMDGPU
 	CFLAGS += $(shell $(PKG_CONFIG) --cflags libdrm_amdgpu)
 	LDLIBS += -ldrm_amdgpu -ldl
 endif
+ifdef DRV_EXYNOS
+	CFLAGS += $(shell $(PKG_CONFIG) --cflags libdrm_exynos)
+endif
 ifdef DRV_I915
 	CFLAGS += $(shell $(PKG_CONFIG) --cflags libdrm_intel)
 endif
@@ -46,7 +49,6 @@ MINIGBM_FILENAME := libminigbm.so.$(MINIGBM_VERSION)
 
 CC_LIBRARY($(MINIGBM_FILENAME)): LDFLAGS += -Wl,-soname,libgbm.so.$(GBM_VERSION_MAJOR)
 CC_LIBRARY($(MINIGBM_FILENAME)): $(C_OBJECTS)
-CC_STATIC_LIBRARY(libminigbm.pie.a): $(C_OBJECTS)
 
 all: CC_LIBRARY($(MINIGBM_FILENAME))
 
