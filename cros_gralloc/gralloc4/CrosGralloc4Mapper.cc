@@ -16,6 +16,8 @@
 #include "cros_gralloc/cros_gralloc_helpers.h"
 #include "cros_gralloc/gralloc4/CrosGralloc4Utils.h"
 
+#include "helpers.h"
+
 using aidl::android::hardware::graphics::common::BlendMode;
 using aidl::android::hardware::graphics::common::Dataspace;
 using aidl::android::hardware::graphics::common::PlaneLayout;
@@ -28,6 +30,62 @@ using android::hardware::graphics::common::V1_2::BufferUsage;
 using android::hardware::graphics::common::V1_2::PixelFormat;
 using android::hardware::graphics::mapper::V4_0::Error;
 using android::hardware::graphics::mapper::V4_0::IMapper;
+
+namespace {
+
+// Provides a single instance of cros_gralloc_driver to all active instances of
+// CrosGralloc4Mapper in a single process while destroying the cros_gralloc_driver
+// when there are no active instances of CrosGralloc4Mapper.
+class DriverProvider {
+  public:
+    static DriverProvider* Get() {
+        static DriverProvider* instance = new DriverProvider();
+        return instance;
+    }
+
+    cros_gralloc_driver* GetAndReferenceDriver() {
+        std::lock_guard<std::mutex> lock(mMutex);
+        if (!mDriver) {
+            mDriver = std::make_unique<cros_gralloc_driver>();
+            if (mDriver->init()) {
+                drv_log("Failed to initialize driver.\n");
+                mDriver.reset();
+                return nullptr;
+            }
+        }
+
+        ++mReferenceCount;
+        return mDriver.get();
+    }
+
+    void UnreferenceDriver() {
+        std::lock_guard<std::mutex> lock(mMutex);
+
+        --mReferenceCount;
+
+        if (mReferenceCount == 0) {
+            mDriver.reset();
+        }
+    }
+
+  private:
+    DriverProvider() = default;
+
+    std::mutex mMutex;
+    std::unique_ptr<cros_gralloc_driver> mDriver;
+    std::size_t mReferenceCount = 0;
+};
+
+}  // namespace
+
+CrosGralloc4Mapper::CrosGralloc4Mapper() {
+    mDriver = DriverProvider::Get()->GetAndReferenceDriver();
+}
+
+CrosGralloc4Mapper::~CrosGralloc4Mapper() {
+    mDriver = nullptr;
+    DriverProvider::Get()->UnreferenceDriver();
+}
 
 Return<void> CrosGralloc4Mapper::createDescriptor(const BufferDescriptorInfo& description,
                                                   createDescriptor_cb hidlCb) {
@@ -390,7 +448,13 @@ Return<void> CrosGralloc4Mapper::isSupported(const BufferDescriptorInfo& descrip
         return Void();
     }
 
-    hidlCb(Error::NONE, mDriver->is_supported(&crosDescriptor));
+    bool supported = mDriver->is_supported(&crosDescriptor);
+    if (!supported) {
+        crosDescriptor.use_flags &= ~BO_USE_SCANOUT;
+        supported = mDriver->is_supported(&crosDescriptor);
+    }
+
+    hidlCb(Error::NONE, supported);
     return Void();
 }
 
@@ -418,13 +482,11 @@ Return<void> CrosGralloc4Mapper::get(void* rawHandle, const MetadataType& metada
         return Void();
     }
 
-    mDriver->with_buffer(crosHandle, [&, this](cros_gralloc_buffer* crosBuffer) {
-        get(crosBuffer, metadataType, hidlCb);
-    });
+    get(crosHandle, metadataType, hidlCb);
     return Void();
 }
 
-Return<void> CrosGralloc4Mapper::get(const cros_gralloc_buffer* crosBuffer,
+Return<void> CrosGralloc4Mapper::get(cros_gralloc_handle_t crosHandle,
                                      const MetadataType& metadataType, get_cb hidlCb) {
     hidl_vec<uint8_t> encodedMetadata;
 
@@ -434,54 +496,40 @@ Return<void> CrosGralloc4Mapper::get(const cros_gralloc_buffer* crosBuffer,
         return Void();
     }
 
-    if (!crosBuffer) {
-        drv_log("Failed to get. Invalid buffer.\n");
+    if (!crosHandle) {
+        drv_log("Failed to get. Invalid handle.\n");
         hidlCb(Error::BAD_BUFFER, encodedMetadata);
         return Void();
     }
 
-    const CrosGralloc4Metadata* crosMetadata = nullptr;
-    if (metadataType == android::gralloc4::MetadataType_BlendMode ||
-        metadataType == android::gralloc4::MetadataType_Cta861_3 ||
-        metadataType == android::gralloc4::MetadataType_Dataspace ||
-        metadataType == android::gralloc4::MetadataType_Name ||
-        metadataType == android::gralloc4::MetadataType_Smpte2086) {
-        Error error = getMetadata(crosBuffer, &crosMetadata);
-        if (error != Error::NONE) {
-            drv_log("Failed to get. Failed to get buffer metadata.\n");
-            hidlCb(Error::NO_RESOURCES, encodedMetadata);
-            return Void();
-        }
-    }
-
     android::status_t status = android::NO_ERROR;
     if (metadataType == android::gralloc4::MetadataType_BufferId) {
-        status = android::gralloc4::encodeBufferId(crosBuffer->get_id(), &encodedMetadata);
+        status = android::gralloc4::encodeBufferId(crosHandle->id, &encodedMetadata);
     } else if (metadataType == android::gralloc4::MetadataType_Name) {
-        status = android::gralloc4::encodeName(crosMetadata->name, &encodedMetadata);
+        const char* name = (const char*)(&crosHandle->data[crosHandle->name_offset]);
+        status = android::gralloc4::encodeName(name, &encodedMetadata);
     } else if (metadataType == android::gralloc4::MetadataType_Width) {
-        status = android::gralloc4::encodeWidth(crosBuffer->get_width(), &encodedMetadata);
+        status = android::gralloc4::encodeWidth(crosHandle->width, &encodedMetadata);
     } else if (metadataType == android::gralloc4::MetadataType_Height) {
-        status = android::gralloc4::encodeHeight(crosBuffer->get_height(), &encodedMetadata);
+        status = android::gralloc4::encodeHeight(crosHandle->height, &encodedMetadata);
     } else if (metadataType == android::gralloc4::MetadataType_LayerCount) {
         status = android::gralloc4::encodeLayerCount(1, &encodedMetadata);
     } else if (metadataType == android::gralloc4::MetadataType_PixelFormatRequested) {
-        PixelFormat pixelFormat = static_cast<PixelFormat>(crosBuffer->get_android_format());
+        PixelFormat pixelFormat = static_cast<PixelFormat>(crosHandle->droid_format);
         status = android::gralloc4::encodePixelFormatRequested(pixelFormat, &encodedMetadata);
     } else if (metadataType == android::gralloc4::MetadataType_PixelFormatFourCC) {
         status = android::gralloc4::encodePixelFormatFourCC(
-                drv_get_standard_fourcc(crosBuffer->get_format()), &encodedMetadata);
+                drv_get_standard_fourcc(crosHandle->format), &encodedMetadata);
     } else if (metadataType == android::gralloc4::MetadataType_PixelFormatModifier) {
-        status = android::gralloc4::encodePixelFormatModifier(crosBuffer->get_format_modifier(),
+        status = android::gralloc4::encodePixelFormatModifier(crosHandle->format_modifier,
                                                               &encodedMetadata);
     } else if (metadataType == android::gralloc4::MetadataType_Usage) {
-        status = android::gralloc4::encodeUsage(crosBuffer->get_android_usage(), &encodedMetadata);
+        uint64_t usage = static_cast<uint64_t>(crosHandle->usage);
+        status = android::gralloc4::encodeUsage(usage, &encodedMetadata);
     } else if (metadataType == android::gralloc4::MetadataType_AllocationSize) {
-        status = android::gralloc4::encodeAllocationSize(crosBuffer->get_total_size(),
-                                                         &encodedMetadata);
+        status = android::gralloc4::encodeAllocationSize(crosHandle->total_size, &encodedMetadata);
     } else if (metadataType == android::gralloc4::MetadataType_ProtectedContent) {
-        uint64_t hasProtectedContent =
-                crosBuffer->get_android_usage() & BufferUsage::PROTECTED ? 1 : 0;
+        uint64_t hasProtectedContent = crosHandle->usage & BufferUsage::PROTECTED ? 1 : 0;
         status = android::gralloc4::encodeProtectedContent(hasProtectedContent, &encodedMetadata);
     } else if (metadataType == android::gralloc4::MetadataType_Compression) {
         status = android::gralloc4::encodeCompression(android::gralloc4::Compression_None,
@@ -494,43 +542,38 @@ Return<void> CrosGralloc4Mapper::get(const cros_gralloc_buffer* crosBuffer,
                                                        &encodedMetadata);
     } else if (metadataType == android::gralloc4::MetadataType_PlaneLayouts) {
         std::vector<PlaneLayout> planeLayouts;
-        getPlaneLayouts(crosBuffer->get_format(), &planeLayouts);
+        getPlaneLayouts(crosHandle->format, &planeLayouts);
 
         for (size_t plane = 0; plane < planeLayouts.size(); plane++) {
             PlaneLayout& planeLayout = planeLayouts[plane];
-            planeLayout.offsetInBytes = crosBuffer->get_plane_offset(plane);
-            planeLayout.strideInBytes = crosBuffer->get_plane_stride(plane);
-            planeLayout.totalSizeInBytes = crosBuffer->get_plane_size(plane);
-            planeLayout.widthInSamples =
-                    crosBuffer->get_width() / planeLayout.horizontalSubsampling;
-            planeLayout.heightInSamples =
-                    crosBuffer->get_height() / planeLayout.verticalSubsampling;
+            planeLayout.offsetInBytes = crosHandle->offsets[plane];
+            planeLayout.strideInBytes = crosHandle->strides[plane];
+            planeLayout.totalSizeInBytes = crosHandle->sizes[plane];
+            planeLayout.widthInSamples = crosHandle->width / planeLayout.horizontalSubsampling;
+            planeLayout.heightInSamples = crosHandle->height / planeLayout.verticalSubsampling;
         }
 
         status = android::gralloc4::encodePlaneLayouts(planeLayouts, &encodedMetadata);
     } else if (metadataType == android::gralloc4::MetadataType_Crop) {
-        const uint32_t numPlanes = crosBuffer->get_num_planes();
-        const uint32_t w = crosBuffer->get_width();
-        const uint32_t h = crosBuffer->get_height();
         std::vector<aidl::android::hardware::graphics::common::Rect> crops;
-        for (uint32_t plane = 0; plane < numPlanes; plane++) {
+        for (size_t plane = 0; plane < crosHandle->num_planes; plane++) {
             aidl::android::hardware::graphics::common::Rect crop;
             crop.left = 0;
             crop.top = 0;
-            crop.right = w;
-            crop.bottom = h;
+            crop.right = crosHandle->width;
+            crop.bottom = crosHandle->height;
             crops.push_back(crop);
         }
 
         status = android::gralloc4::encodeCrop(crops, &encodedMetadata);
     } else if (metadataType == android::gralloc4::MetadataType_Dataspace) {
-        status = android::gralloc4::encodeDataspace(crosMetadata->dataspace, &encodedMetadata);
+        status = android::gralloc4::encodeDataspace(Dataspace::UNKNOWN, &encodedMetadata);
     } else if (metadataType == android::gralloc4::MetadataType_BlendMode) {
-        status = android::gralloc4::encodeBlendMode(crosMetadata->blendMode, &encodedMetadata);
+        status = android::gralloc4::encodeBlendMode(BlendMode::INVALID, &encodedMetadata);
     } else if (metadataType == android::gralloc4::MetadataType_Smpte2086) {
-        status = android::gralloc4::encodeSmpte2086(crosMetadata->smpte2086, &encodedMetadata);
+        status = android::gralloc4::encodeSmpte2086(std::nullopt, &encodedMetadata);
     } else if (metadataType == android::gralloc4::MetadataType_Cta861_3) {
-        status = android::gralloc4::encodeCta861_3(crosMetadata->cta861_3, &encodedMetadata);
+        status = android::gralloc4::encodeCta861_3(std::nullopt, &encodedMetadata);
     } else if (metadataType == android::gralloc4::MetadataType_Smpte2094_40) {
         status = android::gralloc4::encodeSmpte2094_40(std::nullopt, &encodedMetadata);
     } else {
@@ -549,7 +592,7 @@ Return<void> CrosGralloc4Mapper::get(const cros_gralloc_buffer* crosBuffer,
 }
 
 Return<Error> CrosGralloc4Mapper::set(void* rawHandle, const MetadataType& metadataType,
-                                      const hidl_vec<uint8_t>& encodedMetadata) {
+                                      const hidl_vec<uint8_t>& /*metadata*/) {
     if (!mDriver) {
         drv_log("Failed to set. Driver is uninitialized.\n");
         return Error::NO_RESOURCES;
@@ -583,68 +626,7 @@ Return<Error> CrosGralloc4Mapper::set(void* rawHandle, const MetadataType& metad
         return Error::BAD_VALUE;
     }
 
-    if (metadataType != android::gralloc4::MetadataType_BlendMode &&
-        metadataType != android::gralloc4::MetadataType_Cta861_3 &&
-        metadataType != android::gralloc4::MetadataType_Dataspace &&
-        metadataType != android::gralloc4::MetadataType_Smpte2086) {
-        return Error::UNSUPPORTED;
-    }
-
-    Error error = Error::NONE;
-    mDriver->with_buffer(crosHandle, [&, this](cros_gralloc_buffer* crosBuffer) {
-        error = set(crosBuffer, metadataType, encodedMetadata);
-    });
-
-    return error;
-}
-
-Error CrosGralloc4Mapper::set(cros_gralloc_buffer* crosBuffer, const MetadataType& metadataType,
-                              const android::hardware::hidl_vec<uint8_t>& encodedMetadata) {
-    if (!mDriver) {
-        drv_log("Failed to set. Driver is uninitialized.\n");
-        return Error::NO_RESOURCES;
-    }
-
-    if (!crosBuffer) {
-        drv_log("Failed to set. Invalid buffer.\n");
-        return Error::BAD_BUFFER;
-    }
-
-    CrosGralloc4Metadata* crosMetadata = nullptr;
-
-    Error error = getMutableMetadata(crosBuffer, &crosMetadata);
-    if (error != Error::NONE) {
-        drv_log("Failed to set. Failed to get buffer metadata.\n");
-        return Error::UNSUPPORTED;
-    }
-
-    if (metadataType == android::gralloc4::MetadataType_BlendMode) {
-        auto status = android::gralloc4::decodeBlendMode(encodedMetadata, &crosMetadata->blendMode);
-        if (status != android::NO_ERROR) {
-            drv_log("Failed to set. Failed to decode blend mode.\n");
-            return Error::UNSUPPORTED;
-        }
-    } else if (metadataType == android::gralloc4::MetadataType_Cta861_3) {
-        auto status = android::gralloc4::decodeCta861_3(encodedMetadata, &crosMetadata->cta861_3);
-        if (status != android::NO_ERROR) {
-            drv_log("Failed to set. Failed to decode cta861_3.\n");
-            return Error::UNSUPPORTED;
-        }
-    } else if (metadataType == android::gralloc4::MetadataType_Dataspace) {
-        auto status = android::gralloc4::decodeDataspace(encodedMetadata, &crosMetadata->dataspace);
-        if (status != android::NO_ERROR) {
-            drv_log("Failed to set. Failed to decode dataspace.\n");
-            return Error::UNSUPPORTED;
-        }
-    } else if (metadataType == android::gralloc4::MetadataType_Smpte2086) {
-        auto status = android::gralloc4::decodeSmpte2086(encodedMetadata, &crosMetadata->smpte2086);
-        if (status != android::NO_ERROR) {
-            drv_log("Failed to set. Failed to decode smpte2086.\n");
-            return Error::UNSUPPORTED;
-        }
-    }
-
-    return Error::NONE;
+    return Error::UNSUPPORTED;
 }
 
 int CrosGralloc4Mapper::getResolvedDrmFormat(PixelFormat pixelFormat, uint64_t bufferUsage,
@@ -869,25 +851,25 @@ Return<void> CrosGralloc4Mapper::listSupportedMetadataTypes(listSupportedMetadat
                     android::gralloc4::MetadataType_Dataspace,
                     "",
                     /*isGettable=*/true,
-                    /*isSettable=*/true,
+                    /*isSettable=*/false,
             },
             {
                     android::gralloc4::MetadataType_BlendMode,
                     "",
                     /*isGettable=*/true,
-                    /*isSettable=*/true,
+                    /*isSettable=*/false,
             },
             {
                     android::gralloc4::MetadataType_Smpte2086,
                     "",
                     /*isGettable=*/true,
-                    /*isSettable=*/true,
+                    /*isSettable=*/false,
             },
             {
                     android::gralloc4::MetadataType_Cta861_3,
                     "",
                     /*isGettable=*/true,
-                    /*isSettable=*/true,
+                    /*isSettable=*/false,
             },
             {
                     android::gralloc4::MetadataType_Smpte2094_40,
@@ -924,19 +906,22 @@ Return<void> CrosGralloc4Mapper::dumpBuffer(void* rawHandle, dumpBuffer_cb hidlC
         return Void();
     }
 
-    mDriver->with_buffer(crosHandle, [&, this](cros_gralloc_buffer* crosBuffer) {
-        dumpBuffer(crosBuffer, hidlCb);
-    });
-    return Void();
+    return dumpBuffer(crosHandle, hidlCb);
 }
 
-Return<void> CrosGralloc4Mapper::dumpBuffer(const cros_gralloc_buffer* crosBuffer,
+Return<void> CrosGralloc4Mapper::dumpBuffer(cros_gralloc_handle_t crosHandle,
                                             dumpBuffer_cb hidlCb) {
     BufferDump bufferDump;
 
     if (!mDriver) {
         drv_log("Failed to dumpBuffer. Driver is uninitialized.\n");
         hidlCb(Error::NO_RESOURCES, bufferDump);
+        return Void();
+    }
+
+    if (!crosHandle) {
+        drv_log("Failed to dumpBuffer. Invalid handle.\n");
+        hidlCb(Error::BAD_BUFFER, bufferDump);
         return Void();
     }
 
@@ -951,55 +936,55 @@ Return<void> CrosGralloc4Mapper::dumpBuffer(const cros_gralloc_buffer* crosBuffe
     };
 
     metadataType = android::gralloc4::MetadataType_BufferId;
-    get(crosBuffer, metadataType, metadata_get_callback);
+    get(crosHandle, metadataType, metadata_get_callback);
 
     metadataType = android::gralloc4::MetadataType_Name;
-    get(crosBuffer, metadataType, metadata_get_callback);
+    get(crosHandle, metadataType, metadata_get_callback);
 
     metadataType = android::gralloc4::MetadataType_Width;
-    get(crosBuffer, metadataType, metadata_get_callback);
+    get(crosHandle, metadataType, metadata_get_callback);
 
     metadataType = android::gralloc4::MetadataType_Height;
-    get(crosBuffer, metadataType, metadata_get_callback);
+    get(crosHandle, metadataType, metadata_get_callback);
 
     metadataType = android::gralloc4::MetadataType_LayerCount;
-    get(crosBuffer, metadataType, metadata_get_callback);
+    get(crosHandle, metadataType, metadata_get_callback);
 
     metadataType = android::gralloc4::MetadataType_PixelFormatRequested;
-    get(crosBuffer, metadataType, metadata_get_callback);
+    get(crosHandle, metadataType, metadata_get_callback);
 
     metadataType = android::gralloc4::MetadataType_PixelFormatFourCC;
-    get(crosBuffer, metadataType, metadata_get_callback);
+    get(crosHandle, metadataType, metadata_get_callback);
 
     metadataType = android::gralloc4::MetadataType_PixelFormatModifier;
-    get(crosBuffer, metadataType, metadata_get_callback);
+    get(crosHandle, metadataType, metadata_get_callback);
 
     metadataType = android::gralloc4::MetadataType_Usage;
-    get(crosBuffer, metadataType, metadata_get_callback);
+    get(crosHandle, metadataType, metadata_get_callback);
 
     metadataType = android::gralloc4::MetadataType_AllocationSize;
-    get(crosBuffer, metadataType, metadata_get_callback);
+    get(crosHandle, metadataType, metadata_get_callback);
 
     metadataType = android::gralloc4::MetadataType_ProtectedContent;
-    get(crosBuffer, metadataType, metadata_get_callback);
+    get(crosHandle, metadataType, metadata_get_callback);
 
     metadataType = android::gralloc4::MetadataType_Compression;
-    get(crosBuffer, metadataType, metadata_get_callback);
+    get(crosHandle, metadataType, metadata_get_callback);
 
     metadataType = android::gralloc4::MetadataType_Interlaced;
-    get(crosBuffer, metadataType, metadata_get_callback);
+    get(crosHandle, metadataType, metadata_get_callback);
 
     metadataType = android::gralloc4::MetadataType_ChromaSiting;
-    get(crosBuffer, metadataType, metadata_get_callback);
+    get(crosHandle, metadataType, metadata_get_callback);
 
     metadataType = android::gralloc4::MetadataType_PlaneLayouts;
-    get(crosBuffer, metadataType, metadata_get_callback);
+    get(crosHandle, metadataType, metadata_get_callback);
 
     metadataType = android::gralloc4::MetadataType_Dataspace;
-    get(crosBuffer, metadataType, metadata_get_callback);
+    get(crosHandle, metadataType, metadata_get_callback);
 
     metadataType = android::gralloc4::MetadataType_BlendMode;
-    get(crosBuffer, metadataType, metadata_get_callback);
+    get(crosHandle, metadataType, metadata_get_callback);
 
     bufferDump.metadataDump = metadataDumps;
     hidlCb(Error::NONE, bufferDump);
@@ -1017,87 +1002,20 @@ Return<void> CrosGralloc4Mapper::dumpBuffers(dumpBuffers_cb hidlCb) {
 
     Error error = Error::NONE;
 
-    const auto dumpBufferCallback = [&](Error err, BufferDump bufferDump) {
-        error = err;
-        if (error == Error::NONE) {
-            bufferDumps.push_back(bufferDump);
-        }
-    };
+    auto handleCallback = [&](cros_gralloc_handle_t crosHandle) {
+        auto dumpBufferCallback = [&](Error err, BufferDump bufferDump) {
+            error = err;
+            if (error == Error::NONE) {
+                bufferDumps.push_back(bufferDump);
+            }
+        };
 
-    mDriver->with_each_buffer(
-            [&](cros_gralloc_buffer* crosBuffer) { dumpBuffer(crosBuffer, dumpBufferCallback); });
+        dumpBuffer(crosHandle, dumpBufferCallback);
+    };
+    mDriver->for_each_handle(handleCallback);
 
     hidlCb(error, bufferDumps);
     return Void();
-}
-
-Error CrosGralloc4Mapper::getReservedRegionArea(const cros_gralloc_buffer* crosBuffer,
-                                                ReservedRegionArea area, void** outAddr,
-                                                uint64_t* outSize) {
-    if (!mDriver) {
-        drv_log("Failed to getReservedRegionArea. Driver is uninitialized.\n");
-        return Error::NO_RESOURCES;
-    }
-
-    if (!crosBuffer) {
-        drv_log("Failed to getReservedRegionArea. Invalid buffer.\n");
-        return Error::BAD_BUFFER;
-    }
-
-    int ret = crosBuffer->get_reserved_region(outAddr, outSize);
-    if (ret) {
-        drv_log("Failed to getReservedRegionArea.\n");
-        *outAddr = nullptr;
-        *outSize = 0;
-        return Error::NO_RESOURCES;
-    }
-
-    switch (area) {
-        case ReservedRegionArea::MAPPER4_METADATA: {
-            // CrosGralloc4Metadata resides at the beginning reserved region.
-            *outSize = sizeof(CrosGralloc4Metadata);
-            break;
-        }
-        case ReservedRegionArea::USER_METADATA: {
-            // User metadata resides after the CrosGralloc4Metadata.
-            *outAddr = reinterpret_cast<void*>(reinterpret_cast<char*>(*outAddr) +
-                                               sizeof(CrosGralloc4Metadata));
-            *outSize = *outSize - sizeof(CrosGralloc4Metadata);
-            break;
-        }
-    }
-
-    return Error::NONE;
-}
-
-Error CrosGralloc4Mapper::getMetadata(const cros_gralloc_buffer* crosBuffer,
-                                      const CrosGralloc4Metadata** outMetadata) {
-    void* addr = nullptr;
-    uint64_t size;
-
-    Error error =
-            getReservedRegionArea(crosBuffer, ReservedRegionArea::MAPPER4_METADATA, &addr, &size);
-    if (error != Error::NONE) {
-        return error;
-    }
-
-    *outMetadata = reinterpret_cast<const CrosGralloc4Metadata*>(addr);
-    return Error::NONE;
-}
-
-Error CrosGralloc4Mapper::getMutableMetadata(cros_gralloc_buffer* crosBuffer,
-                                             CrosGralloc4Metadata** outMetadata) {
-    void* addr = nullptr;
-    uint64_t size;
-
-    Error error =
-            getReservedRegionArea(crosBuffer, ReservedRegionArea::MAPPER4_METADATA, &addr, &size);
-    if (error != Error::NONE) {
-        return error;
-    }
-
-    *outMetadata = reinterpret_cast<CrosGralloc4Metadata*>(addr);
-    return Error::NONE;
 }
 
 Return<void> CrosGralloc4Mapper::getReservedRegion(void* rawHandle, getReservedRegion_cb hidlCb) {
@@ -1123,15 +1041,9 @@ Return<void> CrosGralloc4Mapper::getReservedRegion(void* rawHandle, getReservedR
 
     void* reservedRegionAddr = nullptr;
     uint64_t reservedRegionSize = 0;
-
-    Error error = Error::NONE;
-    mDriver->with_buffer(crosHandle, [&, this](cros_gralloc_buffer* crosBuffer) {
-        error = getReservedRegionArea(crosBuffer, ReservedRegionArea::USER_METADATA,
-                                      &reservedRegionAddr, &reservedRegionSize);
-    });
-
-    if (error != Error::NONE) {
-        drv_log("Failed to getReservedRegion. Failed to getReservedRegionArea.\n");
+    int ret = mDriver->get_reserved_region(bufferHandle, &reservedRegionAddr, &reservedRegionSize);
+    if (ret) {
+        drv_log("Failed to getReservedRegion.\n");
         hidlCb(Error::BAD_BUFFER, nullptr, 0);
         return Void();
     }
