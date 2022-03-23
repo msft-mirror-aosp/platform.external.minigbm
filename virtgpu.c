@@ -13,6 +13,7 @@
 
 #include "drv_priv.h"
 #include "external/virtgpu_drm.h"
+#include "helpers.h"
 #include "util.h"
 #include "virtgpu.h"
 
@@ -48,7 +49,7 @@ static int virtgpu_init(struct driver *drv)
 		get_param.value = (uint64_t)(uintptr_t)&params[i].value;
 		int ret = drmIoctl(drv->fd, DRM_IOCTL_VIRTGPU_GETPARAM, &get_param);
 		if (ret)
-			drv_log("virtgpu backend not enabling %s\n", params[i].name);
+			drv_log("DRM_IOCTL_VIRTGPU_GET_PARAM failed with %s\n", strerror(errno));
 	}
 
 	for (uint32_t i = 0; i < ARRAY_SIZE(virtgpu_backends); i++) {
