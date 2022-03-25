@@ -8,11 +8,11 @@
 
 #include "cros_gralloc/cros_gralloc_driver.h"
 #include "cros_gralloc/cros_gralloc_handle.h"
+#include "cros_gralloc/gralloc4/CrosGralloc4Metadata.h"
 
 class CrosGralloc4Mapper : public android::hardware::graphics::mapper::V4_0::IMapper {
   public:
-    CrosGralloc4Mapper();
-    ~CrosGralloc4Mapper();
+    CrosGralloc4Mapper() = default;
 
     android::hardware::Return<void> createDescriptor(const BufferDescriptorInfo& description,
                                                      createDescriptor_cb hidlCb) override;
@@ -66,16 +66,38 @@ class CrosGralloc4Mapper : public android::hardware::graphics::mapper::V4_0::IMa
                                                       getReservedRegion_cb hidlCb) override;
 
   private:
-    android::hardware::Return<void> get(cros_gralloc_handle_t crosHandle,
+    enum class ReservedRegionArea {
+        /* CrosGralloc4Metadata */
+        MAPPER4_METADATA,
+
+        /* External user metadata */
+        USER_METADATA,
+    };
+
+    android::hardware::graphics::mapper::V4_0::Error getReservedRegionArea(
+            const cros_gralloc_buffer* crosBuffer, ReservedRegionArea area, void** outAddr,
+            uint64_t* outSize);
+
+    android::hardware::graphics::mapper::V4_0::Error getMetadata(
+            const cros_gralloc_buffer* crosBuffer, const CrosGralloc4Metadata** outMetadata);
+
+    android::hardware::graphics::mapper::V4_0::Error getMutableMetadata(
+            cros_gralloc_buffer* crosBuffer, CrosGralloc4Metadata** outMetadata);
+
+    android::hardware::Return<void> get(const cros_gralloc_buffer* crosBuffer,
                                         const MetadataType& metadataType, get_cb hidlCb);
 
-    android::hardware::Return<void> dumpBuffer(cros_gralloc_handle_t crosHandle,
+    android::hardware::graphics::mapper::V4_0::Error set(
+            cros_gralloc_buffer* crosBuffer, const MetadataType& metadataType,
+            const android::hardware::hidl_vec<uint8_t>& metadata);
+
+    android::hardware::Return<void> dumpBuffer(const cros_gralloc_buffer* crosBuffer,
                                                dumpBuffer_cb hidlCb);
 
     int getResolvedDrmFormat(android::hardware::graphics::common::V1_2::PixelFormat pixelFormat,
                              uint64_t bufferUsage, uint32_t* outDrmFormat);
 
-    cros_gralloc_driver* mDriver = nullptr;
+    cros_gralloc_driver* mDriver = cros_gralloc_driver::get_instance();
 };
 
 extern "C" android::hardware::graphics::mapper::V4_0::IMapper* HIDL_FETCH_IMapper(const char* name);
