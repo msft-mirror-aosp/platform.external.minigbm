@@ -13,6 +13,8 @@
 
 #include "cros_gralloc/cros_gralloc_types.h"
 
+std::string getDrmFormatString(uint32_t drmFormat);
+
 std::string getPixelFormatString(android::hardware::graphics::common::V1_2::PixelFormat format);
 
 std::string getUsageString(
