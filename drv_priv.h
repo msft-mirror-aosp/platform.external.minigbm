@@ -27,6 +27,7 @@ struct bo_metadata {
 	uint64_t format_modifier;
 	uint64_t use_flags;
 	size_t total_size;
+	bool cached;
 
 	/*
 	 * Most of the following metadata is virtgpu cross_domain specific.  However, that backend

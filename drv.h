@@ -176,6 +176,8 @@ void *drv_bo_map(struct bo *bo, const struct rectangle *rect, uint32_t map_flags
 
 int drv_bo_unmap(struct bo *bo, struct mapping *mapping);
 
+bool drv_bo_cached(struct bo *bo);
+
 int drv_bo_invalidate(struct bo *bo, struct mapping *mapping);
 
 int drv_bo_flush(struct bo *bo, struct mapping *mapping);

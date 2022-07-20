@@ -587,6 +587,11 @@ out:
 	return ret;
 }
 
+bool drv_bo_cached(struct bo *bo)
+{
+	return bo->meta.cached;
+}
+
 int drv_bo_invalidate(struct bo *bo, struct mapping *mapping)
 {
 	int ret = 0;
