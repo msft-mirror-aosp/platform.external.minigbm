@@ -55,7 +55,7 @@ struct i915_device {
 	int32_t has_hw_protection;
 	struct modifier_support_t modifier;
 	int device_id;
-	bool is_adlp;
+	bool is_xelpd;
 };
 
 static void i915_info_from_device_id(struct i915_device *i915)
@@ -103,12 +103,14 @@ static void i915_info_from_device_id(struct i915_device *i915)
 		0x46b3, 0x46c0, 0x46c1, 0x46c2, 0x46c3, 0x9A40, 0x9A49, 0x9A59, 0x9A60, 0x9A68,
 		0x9A70, 0x9A78, 0x9AC0, 0x9AC9, 0x9AD9, 0x9AF8, 0x4905, 0x4906, 0x4907, 0x4908
 	};
-	const uint16_t adlp_ids[] = { 0x46A0, 0x46A1, 0x46A2, 0x46A3, 0x46A6, 0x46A8,
-				      0x46AA, 0x462A, 0x4626, 0x4628, 0x46B0, 0x46B1,
-				      0x46B2, 0x46B3, 0x46C0, 0x46C1, 0x46C2, 0x46C3 };
+	const uint16_t adlp_ids[] = { 0x46A0, 0x46A1, 0x46A2, 0x46A3, 0x46A6, 0x46A8, 0x46AA,
+				      0x462A, 0x4626, 0x4628, 0x46B0, 0x46B1, 0x46B2, 0x46B3,
+				      0x46C0, 0x46C1, 0x46C2, 0x46C3, 0x46D0, 0x46D1, 0x46D2 };
+
+	const uint16_t rplp_ids[] = { 0xA720, 0xA721, 0xA7A0, 0xA7A1, 0xA7A8, 0xA7A9 };
 	unsigned i;
 	i915->gen = 4;
-	i915->is_adlp = false;
+	i915->is_xelpd = false;
 
 	for (i = 0; i < ARRAY_SIZE(gen3_ids); i++)
 		if (gen3_ids[i] == i915->device_id)
@@ -156,7 +158,13 @@ static void i915_info_from_device_id(struct i915_device *i915)
 
 	for (i = 0; i < ARRAY_SIZE(adlp_ids); i++)
 		if (adlp_ids[i] == i915->device_id) {
-			i915->is_adlp = true;
+			i915->is_xelpd = true;
+			i915->gen = 12;
+		}
+
+	for (i = 0; i < ARRAY_SIZE(rplp_ids); i++)
+		if (rplp_ids[i] == i915->device_id) {
+			i915->is_xelpd = true;
 			i915->gen = 12;
 		}
 }
@@ -166,8 +174,7 @@ static void i915_get_modifier_order(struct i915_device *i915)
 	if (i915->gen == 12) {
 		i915->modifier.order = gen12_modifier_order;
 		i915->modifier.count = ARRAY_SIZE(gen12_modifier_order);
-	}
-	else if (i915->gen == 11) {
+	} else if (i915->gen == 11) {
 		i915->modifier.order = gen11_modifier_order;
 		i915->modifier.count = ARRAY_SIZE(gen11_modifier_order);
 	} else {
@@ -228,7 +235,7 @@ static int i915_add_combinations(struct driver *drv)
 	 */
 	drv_modify_combination(drv, DRM_FORMAT_R8, &metadata_linear,
 			       BO_USE_CAMERA_READ | BO_USE_CAMERA_WRITE | BO_USE_HW_VIDEO_DECODER |
-				   BO_USE_HW_VIDEO_ENCODER);
+				   BO_USE_HW_VIDEO_ENCODER | BO_USE_GPU_DATA_BUFFER);
 
 	const uint64_t render_not_linear = unset_flags(render, linear_mask);
 	const uint64_t scanout_and_render_not_linear = render_not_linear | BO_USE_SCANOUT;
@@ -356,7 +363,7 @@ static int i915_init(struct driver *drv)
 	get_param.value = &(i915->device_id);
 	ret = drmIoctl(drv->fd, DRM_IOCTL_I915_GETPARAM, &get_param);
 	if (ret) {
-		drv_log("Failed to get I915_PARAM_CHIPSET_ID\n");
+		drv_loge("Failed to get I915_PARAM_CHIPSET_ID\n");
 		free(i915);
 		return -EINVAL;
 	}
@@ -370,7 +377,7 @@ static int i915_init(struct driver *drv)
 	get_param.value = &i915->has_llc;
 	ret = drmIoctl(drv->fd, DRM_IOCTL_I915_GETPARAM, &get_param);
 	if (ret) {
-		drv_log("Failed to get I915_PARAM_HAS_LLC\n");
+		drv_loge("Failed to get I915_PARAM_HAS_LLC\n");
 		free(i915);
 		return -EINVAL;
 	}
@@ -438,6 +445,18 @@ static int i915_bo_from_format(struct bo *bo, uint32_t width, uint32_t height, u
 	bo->meta.total_size = ALIGN(offset, pagesize);
 
 	return 0;
+}
+
+static size_t i915_num_planes_from_modifier(struct driver *drv, uint32_t format, uint64_t modifier)
+{
+	size_t num_planes = drv_num_planes_from_format(format);
+	if (modifier == I915_FORMAT_MOD_Y_TILED_CCS ||
+	    modifier == I915_FORMAT_MOD_Y_TILED_GEN12_RC_CCS) {
+		assert(num_planes == 1);
+		return 2;
+	}
+
+	return num_planes;
 }
 
 static int i915_bo_compute_metadata(struct bo *bo, uint32_t width, uint32_t height, uint32_t format,
@@ -564,7 +583,7 @@ static int i915_bo_compute_metadata(struct bo *bo, uint32_t width, uint32_t heig
 		bo->meta.offsets[1] = offset;
 		offset += ccs_size;
 
-		bo->meta.num_planes = 2;
+		bo->meta.num_planes = i915_num_planes_from_modifier(bo->drv, format, modifier);
 		bo->meta.total_size = offset;
 	} else if (modifier == I915_FORMAT_MOD_Y_TILED_GEN12_RC_CCS) {
 
@@ -579,7 +598,7 @@ static int i915_bo_compute_metadata(struct bo *bo, uint32_t width, uint32_t heig
 
 		height = ALIGN(drv_height_from_format(format, height, 0), 32);
 
-		if (i915->is_adlp && (stride > 1)) {
+		if (i915->is_xelpd && (stride > 1)) {
 			stride = 1 << (32 - __builtin_clz(stride - 1));
 			height = ALIGN(drv_height_from_format(format, height, 0), 128);
 		}
@@ -599,7 +618,7 @@ static int i915_bo_compute_metadata(struct bo *bo, uint32_t width, uint32_t heig
 		bo->meta.sizes[1] = ALIGN(bo->meta.sizes[0] / 256, getpagesize());
 		bo->meta.offsets[1] = bo->meta.sizes[0];
 		/* Total number of planes & sizes */
-		bo->meta.num_planes = 2;
+		bo->meta.num_planes = i915_num_planes_from_modifier(bo->drv, format, modifier);
 		bo->meta.total_size = bo->meta.sizes[0] + bo->meta.sizes[1];
 	} else {
 		i915_bo_from_format(bo, width, height, format);
@@ -628,8 +647,8 @@ static int i915_bo_create_from_metadata(struct bo *bo)
 
 		ret = drmIoctl(bo->drv->fd, DRM_IOCTL_I915_GEM_CREATE_EXT, &create_ext);
 		if (ret) {
-			drv_log("DRM_IOCTL_I915_GEM_CREATE_EXT failed (size=%llu) (ret=%d) \n",
-				create_ext.size, ret);
+			drv_loge("DRM_IOCTL_I915_GEM_CREATE_EXT failed (size=%llu) (ret=%d) \n",
+				 create_ext.size, ret);
 			return -errno;
 		}
 
@@ -639,7 +658,7 @@ static int i915_bo_create_from_metadata(struct bo *bo)
 		gem_create.size = bo->meta.total_size;
 		ret = drmIoctl(bo->drv->fd, DRM_IOCTL_I915_GEM_CREATE, &gem_create);
 		if (ret) {
-			drv_log("DRM_IOCTL_I915_GEM_CREATE failed (size=%llu)\n", gem_create.size);
+			drv_loge("DRM_IOCTL_I915_GEM_CREATE failed (size=%llu)\n", gem_create.size);
 			return -errno;
 		}
 
@@ -659,7 +678,7 @@ static int i915_bo_create_from_metadata(struct bo *bo)
 		gem_close.handle = bo->handles[0].u32;
 		drmIoctl(bo->drv->fd, DRM_IOCTL_GEM_CLOSE, &gem_close);
 
-		drv_log("DRM_IOCTL_I915_GEM_SET_TILING failed with %d\n", errno);
+		drv_loge("DRM_IOCTL_I915_GEM_SET_TILING failed with %d\n", errno);
 		return -errno;
 	}
 
@@ -677,6 +696,9 @@ static int i915_bo_import(struct bo *bo, struct drv_import_fd_data *data)
 	int ret;
 	struct drm_i915_gem_get_tiling gem_get_tiling = { 0 };
 
+	bo->meta.num_planes =
+	    i915_num_planes_from_modifier(bo->drv, data->format, data->format_modifier);
+
 	ret = drv_prime_bo_import(bo, data);
 	if (ret)
 		return ret;
@@ -687,7 +709,7 @@ static int i915_bo_import(struct bo *bo, struct drv_import_fd_data *data)
 	ret = drmIoctl(bo->drv->fd, DRM_IOCTL_I915_GEM_GET_TILING, &gem_get_tiling);
 	if (ret) {
 		drv_gem_bo_destroy(bo);
-		drv_log("DRM_IOCTL_I915_GEM_GET_TILING failed.\n");
+		drv_loge("DRM_IOCTL_I915_GEM_GET_TILING failed.\n");
 		return ret;
 	}
 
@@ -743,7 +765,7 @@ static void *i915_bo_map(struct bo *bo, struct vma *vma, size_t plane, uint32_t 
 		gem_map.handle = bo->handles[0].u32;
 		ret = drmIoctl(bo->drv->fd, DRM_IOCTL_I915_GEM_MMAP_GTT, &gem_map);
 		if (ret) {
-			drv_log("DRM_IOCTL_I915_GEM_MMAP_GTT failed\n");
+			drv_loge("DRM_IOCTL_I915_GEM_MMAP_GTT failed\n");
 			return MAP_FAILED;
 		}
 
@@ -752,7 +774,7 @@ static void *i915_bo_map(struct bo *bo, struct vma *vma, size_t plane, uint32_t 
 	}
 
 	if (addr == MAP_FAILED) {
-		drv_log("i915 GEM mmap failed\n");
+		drv_loge("i915 GEM mmap failed\n");
 		return addr;
 	}
 
@@ -778,7 +800,7 @@ static int i915_bo_invalidate(struct bo *bo, struct mapping *mapping)
 
 	ret = drmIoctl(bo->drv->fd, DRM_IOCTL_I915_GEM_SET_DOMAIN, &set_domain);
 	if (ret) {
-		drv_log("DRM_IOCTL_I915_GEM_SET_DOMAIN with %d\n", ret);
+		drv_loge("DRM_IOCTL_I915_GEM_SET_DOMAIN with %d\n", ret);
 		return ret;
 	}
 
@@ -807,6 +829,7 @@ const struct backend backend_i915 = {
 	.bo_invalidate = i915_bo_invalidate,
 	.bo_flush = i915_bo_flush,
 	.resolve_format_and_use_flags = drv_resolve_format_and_use_flags_helper,
+	.num_planes_from_modifier = i915_num_planes_from_modifier,
 };
 
 #endif

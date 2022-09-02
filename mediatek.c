@@ -59,7 +59,6 @@ static const uint32_t texture_source_formats[] = {
 	DRM_FORMAT_YVU420_ANDROID
 };
 
-#ifdef DONT_USE_64_ALIGNMENT_FOR_VIDEO_BUFFERS
 static const uint32_t video_yuv_formats[] = {
 	DRM_FORMAT_NV21,
 	DRM_FORMAT_NV12,
@@ -77,7 +76,6 @@ static bool is_video_yuv_format(uint32_t format)
 	}
 	return false;
 }
-#endif
 
 static int mediatek_init(struct driver *drv)
 {
@@ -111,7 +109,8 @@ static int mediatek_init(struct driver *drv)
 	 */
 	drv_modify_combination(drv, DRM_FORMAT_R8, &metadata,
 			       BO_USE_HW_VIDEO_DECODER | BO_USE_HW_VIDEO_ENCODER |
-				   BO_USE_CAMERA_READ | BO_USE_CAMERA_WRITE);
+				   BO_USE_CAMERA_READ | BO_USE_CAMERA_WRITE |
+				   BO_USE_GPU_DATA_BUFFER);
 
 	/* NV12 format for encoding and display. */
 	drv_modify_combination(drv, DRM_FORMAT_NV12, &metadata,
@@ -142,10 +141,16 @@ static int mediatek_bo_create_with_modifiers(struct bo *bo, uint32_t width, uint
 	size_t plane;
 	uint32_t stride;
 	struct drm_mtk_gem_create gem_create = { 0 };
+	/*
+	 * We identify the ChromeOS Camera App buffers via these two USE flags. Those buffers need
+	 * the same alignment as the video hardware encoding.
+	 */
+	const bool is_camera_preview =
+	    (bo->meta.use_flags & BO_USE_SCANOUT) && (bo->meta.use_flags & BO_USE_CAMERA_WRITE);
 
 	if (!drv_has_modifier(modifiers, count, DRM_FORMAT_MOD_LINEAR)) {
 		errno = EINVAL;
-		drv_log("no usable modifier found\n");
+		drv_loge("no usable modifier found\n");
 		return -EINVAL;
 	}
 
@@ -163,7 +168,7 @@ static int mediatek_bo_create_with_modifiers(struct bo *bo, uint32_t width, uint
 	stride = ALIGN(stride, 64);
 #endif
 
-	if (bo->meta.use_flags & BO_USE_HW_VIDEO_ENCODER) {
+	if ((bo->meta.use_flags & BO_USE_HW_VIDEO_ENCODER) || is_camera_preview) {
 		uint32_t aligned_height = ALIGN(height, 32);
 		uint32_t padding[DRV_MAX_PLANES] = { 0 };
 
@@ -191,7 +196,7 @@ static int mediatek_bo_create_with_modifiers(struct bo *bo, uint32_t width, uint
 
 	ret = drmIoctl(bo->drv->fd, DRM_IOCTL_MTK_GEM_CREATE, &gem_create);
 	if (ret) {
-		drv_log("DRM_IOCTL_MTK_GEM_CREATE failed (size=%" PRIu64 ")\n", gem_create.size);
+		drv_loge("DRM_IOCTL_MTK_GEM_CREATE failed (size=%" PRIu64 ")\n", gem_create.size);
 		return -errno;
 	}
 
@@ -220,13 +225,13 @@ static void *mediatek_bo_map(struct bo *bo, struct vma *vma, size_t plane, uint3
 
 	ret = drmIoctl(bo->drv->fd, DRM_IOCTL_MTK_GEM_MAP_OFFSET, &gem_map);
 	if (ret) {
-		drv_log("DRM_IOCTL_MTK_GEM_MAP_OFFSET failed\n");
+		drv_loge("DRM_IOCTL_MTK_GEM_MAP_OFFSET failed\n");
 		return MAP_FAILED;
 	}
 
 	prime_fd = drv_bo_get_plane_fd(bo, 0);
 	if (prime_fd < 0) {
-		drv_log("Failed to get a prime fd\n");
+		drv_loge("Failed to get a prime fd\n");
 		return MAP_FAILED;
 	}
 
@@ -299,7 +304,7 @@ static int mediatek_bo_invalidate(struct bo *bo, struct mapping *mapping)
 
 		poll(&fds, 1, -1);
 		if (fds.revents != fds.events)
-			drv_log("poll prime_fd failed\n");
+			drv_loge("poll prime_fd failed\n");
 
 		if (priv->cached_addr)
 			memcpy(priv->cached_addr, priv->gem_addr, bo->meta.total_size);
@@ -361,12 +366,12 @@ static void mediatek_resolve_format_and_use_flags(struct driver *drv, uint32_t f
 		*out_format = DRM_FORMAT_YVU420;
 		*out_use_flags &= ~BO_USE_SCANOUT;
 		break;
-	case DRM_FORMAT_YVU420_ANDROID:
-		*out_use_flags &= ~BO_USE_SCANOUT;
-		break;
 	default:
 		break;
 	}
+	/* Mediatek doesn't support YUV overlays */
+	if (is_video_yuv_format(format))
+		*out_use_flags &= ~BO_USE_SCANOUT;
 }
 
 const struct backend backend_mediatek = {
