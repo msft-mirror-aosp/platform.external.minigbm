@@ -172,7 +172,7 @@ bool cros_gralloc_driver::get_resolved_format_and_use_flags(
 		resolved_use_flags &= ~BO_USE_HW_VIDEO_ENCODER;
 		combo = drv_get_combination(drv_.get(), resolved_format, resolved_use_flags);
 	}
-	if (!combo && (descriptor->droid_usage & BUFFER_USAGE_FRONT_RENDERING)) {
+	if (!combo && (descriptor->droid_usage & BUFFER_USAGE_FRONT_RENDERING_MASK)) {
 		resolved_use_flags &= ~BO_USE_FRONT_RENDERING;
 		resolved_use_flags |= BO_USE_LINEAR;
 		combo = drv_get_combination(drv_.get(), resolved_format, resolved_use_flags);
@@ -504,7 +504,7 @@ int32_t cros_gralloc_driver::invalidate(buffer_handle_t handle)
 	return buffer->invalidate();
 }
 
-int32_t cros_gralloc_driver::flush(buffer_handle_t handle, int32_t *release_fence)
+int32_t cros_gralloc_driver::flush(buffer_handle_t handle)
 {
 	std::lock_guard<std::mutex> lock(mutex_);
 
@@ -520,13 +520,6 @@ int32_t cros_gralloc_driver::flush(buffer_handle_t handle, int32_t *release_fenc
 		return -EINVAL;
 	}
 
-	/*
-	 * From the ANativeWindow::dequeueBuffer documentation:
-	 *
-	 * "A value of -1 indicates that the caller may access the buffer immediately without
-	 * waiting on a fence."
-	 */
-	*release_fence = -1;
 	return buffer->flush();
 }
 
