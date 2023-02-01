@@ -398,7 +398,7 @@ static inline void handle_flag(uint64_t *flag, uint64_t check_flag, uint32_t *bi
 	}
 }
 
-static uint32_t compute_virgl_bind_flags(uint64_t use_flags, uint32_t format)
+static uint32_t compute_virgl_bind_flags(uint64_t use_flags)
 {
 	/* In crosvm, VIRGL_BIND_SHARED means minigbm will allocate, not virglrenderer. */
 	uint32_t bind = VIRGL_BIND_SHARED;
@@ -484,7 +484,7 @@ static int virgl_3d_bo_create(struct bo *bo, uint32_t width, uint32_t height, ui
 
 	res_create.target = PIPE_TEXTURE_2D;
 	res_create.format = translate_format(format);
-	res_create.bind = compute_virgl_bind_flags(use_flags, format);
+	res_create.bind = compute_virgl_bind_flags(use_flags);
 	res_create.width = width;
 	res_create.height = height;
 
@@ -689,7 +689,7 @@ static int virgl_bo_create_blob(struct driver *drv, struct bo *bo)
 	struct virgl_priv *priv = (struct virgl_priv *)drv->priv;
 
 	uint32_t blob_flags = VIRTGPU_BLOB_FLAG_USE_SHAREABLE;
-	if (bo->meta.use_flags & BO_USE_SW_MASK)
+	if (bo->meta.use_flags & (BO_USE_SW_MASK | BO_USE_GPU_DATA_BUFFER))
 		blob_flags |= VIRTGPU_BLOB_FLAG_USE_MAPPABLE;
 
 	// For now, all blob use cases are cross device. When we add wider
@@ -707,8 +707,7 @@ static int virgl_bo_create_blob(struct driver *drv, struct bo *bo)
 	cmd[VIRGL_PIPE_RES_CREATE_WIDTH] = bo->meta.width;
 	cmd[VIRGL_PIPE_RES_CREATE_HEIGHT] = bo->meta.height;
 	cmd[VIRGL_PIPE_RES_CREATE_FORMAT] = translate_format(bo->meta.format);
-	cmd[VIRGL_PIPE_RES_CREATE_BIND] =
-	    compute_virgl_bind_flags(bo->meta.use_flags, bo->meta.format);
+	cmd[VIRGL_PIPE_RES_CREATE_BIND] = compute_virgl_bind_flags(bo->meta.use_flags);
 	cmd[VIRGL_PIPE_RES_CREATE_DEPTH] = 1;
 	cmd[VIRGL_PIPE_RES_CREATE_BLOB_ID] = cur_blob_id;
 
@@ -775,6 +774,21 @@ static int virgl_bo_create(struct bo *bo, uint32_t width, uint32_t height, uint3
 		return virgl_3d_bo_create(bo, width, height, format, use_flags);
 	else
 		return virgl_2d_dumb_bo_create(bo, width, height, format, use_flags);
+}
+
+static int virgl_bo_create_with_modifiers(struct bo *bo, uint32_t width, uint32_t height,
+					  uint32_t format, const uint64_t *modifiers,
+					  uint32_t count)
+{
+	uint64_t use_flags = 0;
+
+	for (uint32_t i = 0; i < count; i++) {
+		if (modifiers[i] == DRM_FORMAT_MOD_LINEAR) {
+			return virgl_bo_create(bo, width, height, format, use_flags);
+		}
+	}
+
+	return -EINVAL;
 }
 
 static int virgl_bo_destroy(struct bo *bo)
@@ -971,22 +985,31 @@ static void virgl_3d_resolve_format_and_use_flags(struct driver *drv, uint32_t f
 {
 	*out_format = format;
 	*out_use_flags = use_flags;
+
+	/* resolve flexible format into explicit format */
 	switch (format) {
 	case DRM_FORMAT_FLEX_IMPLEMENTATION_DEFINED:
 		/* Camera subsystem requires NV12. */
 		if (use_flags & (BO_USE_CAMERA_READ | BO_USE_CAMERA_WRITE)) {
 			*out_format = DRM_FORMAT_NV12;
 		} else {
-			/* HACK: See b/28671744 */
+			/* HACK: See b/28671744 and b/264408280 */
 			*out_format = DRM_FORMAT_XBGR8888;
 			*out_use_flags &= ~BO_USE_HW_VIDEO_ENCODER;
+			*out_use_flags |= BO_USE_LINEAR;
 		}
 		break;
 	case DRM_FORMAT_FLEX_YCbCr_420_888:
 		/* All of our host drivers prefer NV12 as their flexible media format.
 		 * If that changes, this will need to be modified. */
 		*out_format = DRM_FORMAT_NV12;
-		/* fallthrough */
+		break;
+	default:
+		break;
+	}
+
+	/* resolve explicit format */
+	switch (*out_format) {
 	case DRM_FORMAT_NV12:
 	case DRM_FORMAT_ABGR8888:
 	case DRM_FORMAT_ARGB8888:
@@ -995,8 +1018,8 @@ static void virgl_3d_resolve_format_and_use_flags(struct driver *drv, uint32_t f
 	case DRM_FORMAT_XRGB8888:
 		/* These are the scanout capable formats to the guest. Strip scanout use_flag if the
 		 * host does not natively support scanout on the requested format. */
-		if ((use_flags & BO_USE_SCANOUT) &&
-		    !virgl_supports_combination_natively(drv, format, BO_USE_SCANOUT))
+		if ((*out_use_flags & BO_USE_SCANOUT) &&
+		    !virgl_supports_combination_natively(drv, *out_format, BO_USE_SCANOUT))
 			*out_use_flags &= ~BO_USE_SCANOUT;
 		break;
 	case DRM_FORMAT_YVU420_ANDROID:
@@ -1101,6 +1124,7 @@ const struct backend virtgpu_virgl = { .name = "virtgpu_virgl",
 				       .init = virgl_init,
 				       .close = virgl_close,
 				       .bo_create = virgl_bo_create,
+				       .bo_create_with_modifiers = virgl_bo_create_with_modifiers,
 				       .bo_destroy = virgl_bo_destroy,
 				       .bo_import = drv_prime_bo_import,
 				       .bo_map = virgl_bo_map,

@@ -335,8 +335,14 @@ Return<void> CrosGralloc4Mapper::flushLockedBuffer(void* rawHandle, flushLockedB
         return Void();
     }
 
+    /*
+     * From the ANativeWindow::dequeueBuffer documentation:
+     *
+     * "A value of -1 indicates that the caller may access the buffer immediately without
+     * waiting on a fence."
+     */
     int releaseFenceFd = -1;
-    int ret = mDriver->flush(bufferHandle, &releaseFenceFd);
+    int ret = mDriver->flush(bufferHandle);
     if (ret) {
         ALOGE("Failed to flushLockedBuffer. Flush failed.");
         hidlCb(Error::BAD_BUFFER, nullptr);
@@ -860,6 +866,12 @@ Return<void> CrosGralloc4Mapper::listSupportedMetadataTypes(listSupportedMetadat
             },
             {
                     android::gralloc4::MetadataType_PlaneLayouts,
+                    "",
+                    /*isGettable=*/true,
+                    /*isSettable=*/false,
+            },
+            {
+                    android::gralloc4::MetadataType_Crop,
                     "",
                     /*isGettable=*/true,
                     /*isSettable=*/false,
