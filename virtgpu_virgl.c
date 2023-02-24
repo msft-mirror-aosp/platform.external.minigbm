@@ -6,10 +6,13 @@
 
 #include <assert.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdatomic.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <unistd.h>
 #include <xf86drm.h>
 
 #include "drv_helpers.h"
@@ -21,11 +24,6 @@
 #include "virtgpu.h"
 
 #define PIPE_TEXTURE_2D 2
-
-#define MESA_LLVMPIPE_MAX_TEXTURE_2D_LEVELS 15
-#define MESA_LLVMPIPE_MAX_TEXTURE_2D_SIZE (1 << (MESA_LLVMPIPE_MAX_TEXTURE_2D_LEVELS - 1))
-#define MESA_LLVMPIPE_TILE_ORDER 6
-#define MESA_LLVMPIPE_TILE_SIZE (1 << MESA_LLVMPIPE_TILE_ORDER)
 
 // This comes from a combination of SwiftShader's VkPhysicalDeviceLimits::maxFramebufferWidth and
 // VkPhysicalDeviceLimits::maxImageDimension2D (see https://crrev.com/c/1917130).
@@ -807,6 +805,36 @@ static void *virgl_bo_map(struct bo *bo, struct vma *vma, size_t plane, uint32_t
 		return drv_dumb_bo_map(bo, vma, plane, map_flags);
 }
 
+static bool is_arc_screen_capture_bo(struct bo *bo)
+{
+	struct drm_prime_handle prime_handle = {};
+	int ret, fd;
+	char tmp[256];
+
+	if (bo->meta.num_planes != 1 ||
+	    (bo->meta.format != DRM_FORMAT_ABGR8888 && bo->meta.format != DRM_FORMAT_ARGB8888 &&
+	     bo->meta.format != DRM_FORMAT_XRGB8888 && bo->meta.format != DRM_FORMAT_XBGR8888))
+		return false;
+	prime_handle.handle = bo->handles[0].u32;
+	ret = drmIoctl(bo->drv->fd, DRM_IOCTL_PRIME_HANDLE_TO_FD, &prime_handle);
+	if (ret < 0)
+		return false;
+	snprintf(tmp, sizeof(tmp), "/proc/self/fdinfo/%d", prime_handle.fd);
+	fd = open(tmp, O_RDONLY);
+	if (fd < 0) {
+		close(prime_handle.fd);
+		return false;
+	}
+	ret = read(fd, tmp, sizeof(tmp) - 1);
+	close(prime_handle.fd);
+	close(fd);
+	if (ret < 0)
+		return false;
+	tmp[ret] = 0;
+
+	return strstr(tmp, "ARC-SCREEN-CAP");
+}
+
 static int virgl_bo_invalidate(struct bo *bo, struct mapping *mapping)
 {
 	int ret;
@@ -828,6 +856,15 @@ static int virgl_bo_invalidate(struct bo *bo, struct mapping *mapping)
 		host_write_flags |= BO_USE_HW_VIDEO_ENCODER;
 	else
 		host_write_flags |= BO_USE_HW_VIDEO_DECODER;
+
+	// TODO(b/267892346): Revert this workaround after migrating to virtgpu_cross_domain
+	// backend since it's a special arc only behavior.
+	if (!(bo->meta.use_flags & (BO_USE_ARC_SCREEN_CAP_PROBED | BO_USE_RENDERING))) {
+		bo->meta.use_flags |= BO_USE_ARC_SCREEN_CAP_PROBED;
+		if (is_arc_screen_capture_bo(bo)) {
+			bo->meta.use_flags |= BO_USE_RENDERING;
+		}
+	}
 
 	if ((bo->meta.use_flags & host_write_flags) == 0)
 		return 0;
@@ -985,22 +1022,31 @@ static void virgl_3d_resolve_format_and_use_flags(struct driver *drv, uint32_t f
 {
 	*out_format = format;
 	*out_use_flags = use_flags;
+
+	/* resolve flexible format into explicit format */
 	switch (format) {
 	case DRM_FORMAT_FLEX_IMPLEMENTATION_DEFINED:
 		/* Camera subsystem requires NV12. */
 		if (use_flags & (BO_USE_CAMERA_READ | BO_USE_CAMERA_WRITE)) {
 			*out_format = DRM_FORMAT_NV12;
 		} else {
-			/* HACK: See b/28671744 */
+			/* HACK: See b/28671744 and b/264408280 */
 			*out_format = DRM_FORMAT_XBGR8888;
 			*out_use_flags &= ~BO_USE_HW_VIDEO_ENCODER;
+			*out_use_flags |= BO_USE_LINEAR;
 		}
 		break;
 	case DRM_FORMAT_FLEX_YCbCr_420_888:
 		/* All of our host drivers prefer NV12 as their flexible media format.
 		 * If that changes, this will need to be modified. */
 		*out_format = DRM_FORMAT_NV12;
-		/* fallthrough */
+		break;
+	default:
+		break;
+	}
+
+	/* resolve explicit format */
+	switch (*out_format) {
 	case DRM_FORMAT_NV12:
 	case DRM_FORMAT_ABGR8888:
 	case DRM_FORMAT_ARGB8888:
@@ -1009,8 +1055,8 @@ static void virgl_3d_resolve_format_and_use_flags(struct driver *drv, uint32_t f
 	case DRM_FORMAT_XRGB8888:
 		/* These are the scanout capable formats to the guest. Strip scanout use_flag if the
 		 * host does not natively support scanout on the requested format. */
-		if ((use_flags & BO_USE_SCANOUT) &&
-		    !virgl_supports_combination_natively(drv, format, BO_USE_SCANOUT))
+		if ((*out_use_flags & BO_USE_SCANOUT) &&
+		    !virgl_supports_combination_natively(drv, *out_format, BO_USE_SCANOUT))
 			*out_use_flags &= ~BO_USE_SCANOUT;
 		break;
 	case DRM_FORMAT_YVU420_ANDROID:

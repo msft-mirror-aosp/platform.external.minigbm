@@ -155,7 +155,13 @@ Return<Error> CrosGralloc4Mapper::validateBufferSize(void* rawHandle,
         return Error::BAD_VALUE;
     }
 
-    if (stride != crosHandle->pixel_stride) {
+    if (crosHandle->droid_format == HAL_PIXEL_FORMAT_BLOB) {
+        if (stride > crosHandle->pixel_stride) {
+            ALOGE("Failed to validateBufferSize. Oversized stride (%d vs %d).", stride,
+                  crosHandle->pixel_stride);
+            return Error::BAD_VALUE;
+        }
+    } else if (stride != crosHandle->pixel_stride) {
         ALOGE("Failed to validateBufferSize. Stride mismatch (%d vs %d).", stride,
               crosHandle->pixel_stride);
         return Error::BAD_VALUE;
@@ -336,11 +342,11 @@ Return<void> CrosGralloc4Mapper::flushLockedBuffer(void* rawHandle, flushLockedB
     }
 
     /*
-	 * From the ANativeWindow::dequeueBuffer documentation:
-	 *
-	 * "A value of -1 indicates that the caller may access the buffer immediately without
-	 * waiting on a fence."
-	 */
+     * From the ANativeWindow::dequeueBuffer documentation:
+     *
+     * "A value of -1 indicates that the caller may access the buffer immediately without
+     * waiting on a fence."
+     */
     int releaseFenceFd = -1;
     int ret = mDriver->flush(bufferHandle);
     if (ret) {
@@ -866,6 +872,12 @@ Return<void> CrosGralloc4Mapper::listSupportedMetadataTypes(listSupportedMetadat
             },
             {
                     android::gralloc4::MetadataType_PlaneLayouts,
+                    "",
+                    /*isGettable=*/true,
+                    /*isSettable=*/false,
+            },
+            {
+                    android::gralloc4::MetadataType_Crop,
                     "",
                     /*isGettable=*/true,
                     /*isSettable=*/false,
