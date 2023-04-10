@@ -196,11 +196,6 @@ static int cross_domain_metadata_query(struct driver *drv, struct bo_metadata *m
 	metadata->memory_idx = addr[14];
 	metadata->physical_device_idx = addr[15];
 
-	/* Detect buffers, which have no particular stride alignment requirement: */
-	if ((metadata->height == 1) && (metadata->format == DRM_FORMAT_R8)) {
-		metadata->strides[0] = metadata->width;
-	}
-
 	remaining_size = metadata->total_size;
 	for (plane = 0; plane < metadata->num_planes; plane++) {
 		if (plane != 0) {
@@ -415,7 +410,7 @@ static int cross_domain_bo_create(struct bo *bo, uint32_t width, uint32_t height
 	return 0;
 }
 
-static void *cross_domain_bo_map(struct bo *bo, struct vma *vma, size_t plane, uint32_t map_flags)
+static void *cross_domain_bo_map(struct bo *bo, struct vma *vma, uint32_t map_flags)
 {
 	int ret;
 	struct drm_virtgpu_map gem_map = { 0 };

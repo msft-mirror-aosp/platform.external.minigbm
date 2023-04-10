@@ -73,6 +73,8 @@ static unsigned get_pitch_alignment(struct bo *bo)
 	switch (bo->meta.format) {
 	case DRM_FORMAT_NV12:
 		return VENUS_STRIDE_ALIGN;
+	case DRM_FORMAT_P010:
+		return VENUS_STRIDE_ALIGN * 2;
 	case DRM_FORMAT_YVU420:
 	case DRM_FORMAT_YVU420_ANDROID:
 		/* TODO other YUV formats? */
@@ -105,8 +107,8 @@ static void msm_calculate_layout(struct bo *bo)
 		if (bo->meta.format == DRM_FORMAT_P010)
 			width *= 2;
 
-		y_stride = ALIGN(width, VENUS_STRIDE_ALIGN);
-		uv_stride = ALIGN(width, VENUS_STRIDE_ALIGN);
+		y_stride = ALIGN(width, get_pitch_alignment(bo));
+		uv_stride = ALIGN(width, get_pitch_alignment(bo));
 		y_scanline = ALIGN(height, VENUS_SCANLINE_ALIGN * 2);
 		uv_scanline = ALIGN(DIV_ROUND_UP(height, 2),
 				    VENUS_SCANLINE_ALIGN * (bo->meta.tiling ? 2 : 1));
@@ -149,7 +151,7 @@ static void msm_calculate_layout(struct bo *bo)
 		stride = drv_stride_from_format(bo->meta.format, alignw, 0);
 
 		/* Calculate size and assign stride, size, offset to each plane based on format */
-		drv_bo_from_format(bo, stride, alignh, bo->meta.format);
+		drv_bo_from_format(bo, stride, 1, alignh, bo->meta.format);
 
 		/* For all RGB UBWC formats */
 		if (bo->meta.tiling == MSM_UBWC_TILING) {
@@ -350,10 +352,13 @@ static int msm_bo_create(struct bo *bo, uint32_t width, uint32_t height, uint32_
 	return msm_bo_create_for_modifier(bo, width, height, format, combo->metadata.modifier);
 }
 
-static void *msm_bo_map(struct bo *bo, struct vma *vma, size_t plane, uint32_t map_flags)
+static void *msm_bo_map(struct bo *bo, struct vma *vma, uint32_t map_flags)
 {
 	int ret;
 	struct drm_msm_gem_info req = { 0 };
+
+	if (bo->meta.format_modifier)
+		return MAP_FAILED;
 
 	req.handle = bo->handles[0].u32;
 	ret = drmIoctl(bo->drv->fd, DRM_IOCTL_MSM_GEM_INFO, &req);

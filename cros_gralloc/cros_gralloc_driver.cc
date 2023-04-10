@@ -7,6 +7,7 @@
 #include "cros_gralloc_driver.h"
 
 #include <cstdlib>
+#include <cutils/properties.h>
 #include <fcntl.h>
 #include <hardware/gralloc.h>
 #include <sys/mman.h>
@@ -24,6 +25,22 @@
 
 // DRM Card nodes start at 0
 #define DRM_CARD_NODE_START 0
+
+class cros_gralloc_driver_preloader
+{
+      public:
+	cros_gralloc_driver_preloader()
+	{
+		drv_preload(true);
+	}
+
+	~cros_gralloc_driver_preloader()
+	{
+		drv_preload(false);
+	}
+};
+
+static class cros_gralloc_driver_preloader cros_gralloc_driver_preloader;
 
 int memfd_create_wrapper(const char *name, unsigned int flags)
 {
@@ -138,6 +155,9 @@ static void drv_destroy_and_close(struct driver *drv)
 
 cros_gralloc_driver::cros_gralloc_driver() : drv_(init_try_nodes(), drv_destroy_and_close)
 {
+	char buf[PROP_VALUE_MAX];
+	property_get("ro.product.device", buf, "unknown");
+	mt8183_camera_quirk_ = !strncmp(buf, "kukui", strlen("kukui"));
 }
 
 cros_gralloc_driver::~cros_gralloc_driver()
@@ -158,6 +178,14 @@ bool cros_gralloc_driver::get_resolved_format_and_use_flags(
 	uint32_t resolved_format;
 	uint64_t resolved_use_flags;
 	struct combination *combo;
+
+	if (mt8183_camera_quirk_ && (descriptor->use_flags & BO_USE_CAMERA_READ) &&
+	    !(descriptor->use_flags & BO_USE_SCANOUT) &&
+	    descriptor->drm_format == DRM_FORMAT_FLEX_IMPLEMENTATION_DEFINED) {
+		*out_use_flags = descriptor->use_flags;
+		*out_format = DRM_FORMAT_MTISP_SXYZW10;
+		return true;
+	}
 
 	drv_resolve_format_and_use_flags(drv_.get(), descriptor->drm_format, descriptor->use_flags,
 					 &resolved_format, &resolved_use_flags);
