@@ -246,6 +246,9 @@ static int i915_add_combinations(struct driver *drv)
 				   BO_USE_HW_VIDEO_DECODER | BO_USE_HW_VIDEO_ENCODER |
 				   hw_protected);
 
+	/* P010 linear can be used for scanout too. */
+	drv_modify_combination(drv, DRM_FORMAT_P010, &metadata_linear, BO_USE_SCANOUT);
+
 	/* Android CTS tests require this. */
 	drv_add_combination(drv, DRM_FORMAT_BGR888, &metadata_linear, BO_USE_SW_MASK);
 
@@ -290,7 +293,7 @@ static int i915_add_combinations(struct driver *drv)
 				     &metadata_4_tiled, render_not_linear);
 		drv_add_combinations(drv, scanout_render_formats,
 				     ARRAY_SIZE(scanout_render_formats), &metadata_4_tiled,
-				     render_not_linear);
+				     scanout_and_render_not_linear);
 	} else {
 		struct format_metadata metadata_y_tiled = { .tiling = I915_TILING_Y,
 							    .priority = 3,
@@ -406,9 +409,14 @@ static void i915_clflush(void *start, size_t size)
 
 	__builtin_ia32_mfence();
 	while (p < end) {
+#if defined(__CLFLUSHOPT__)
+		__builtin_ia32_clflushopt(p);
+#else
 		__builtin_ia32_clflush(p);
+#endif
 		p = (void *)((uintptr_t)p + I915_CACHELINE_SIZE);
 	}
+	__builtin_ia32_mfence();
 }
 
 static int i915_init(struct driver *drv)
@@ -716,7 +724,6 @@ static int i915_bo_compute_metadata(struct bo *bo, uint32_t width, uint32_t heig
 static int i915_bo_create_from_metadata(struct bo *bo)
 {
 	int ret;
-	size_t plane;
 	uint32_t gem_handle;
 	struct drm_i915_gem_set_tiling gem_set_tiling = { 0 };
 	struct i915_device *i915 = bo->drv->priv;
@@ -752,21 +759,20 @@ static int i915_bo_create_from_metadata(struct bo *bo)
 		gem_handle = gem_create.handle;
 	}
 
-	for (plane = 0; plane < bo->meta.num_planes; plane++)
-		bo->handles[plane].u32 = gem_handle;
+	bo->handle.u32 = gem_handle;
 
 	/* Set/Get tiling ioctl not supported  based on fence availability
 	   Refer : "https://patchwork.freedesktop.org/patch/325343/"
 	 */
 	if (i915->num_fences_avail) {
-		gem_set_tiling.handle = bo->handles[0].u32;
+		gem_set_tiling.handle = bo->handle.u32;
 		gem_set_tiling.tiling_mode = bo->meta.tiling;
 		gem_set_tiling.stride = bo->meta.strides[0];
 
 		ret = drmIoctl(bo->drv->fd, DRM_IOCTL_I915_GEM_SET_TILING, &gem_set_tiling);
 		if (ret) {
 			struct drm_gem_close gem_close = { 0 };
-			gem_close.handle = bo->handles[0].u32;
+			gem_close.handle = bo->handle.u32;
 			drmIoctl(bo->drv->fd, DRM_IOCTL_GEM_CLOSE, &gem_close);
 
 			drv_loge("DRM_IOCTL_I915_GEM_SET_TILING failed with %d\n", errno);
@@ -800,7 +806,7 @@ static int i915_bo_import(struct bo *bo, struct drv_import_fd_data *data)
 	 */
 	if (i915->num_fences_avail) {
 		/* TODO(gsingh): export modifiers and get rid of backdoor tiling. */
-		gem_get_tiling.handle = bo->handles[0].u32;
+		gem_get_tiling.handle = bo->handle.u32;
 
 		ret = drmIoctl(bo->drv->fd, DRM_IOCTL_I915_GEM_GET_TILING, &gem_get_tiling);
 		if (ret) {
@@ -827,7 +833,7 @@ static void *i915_bo_map(struct bo *bo, struct vma *vma, uint32_t map_flags)
 	if (bo->meta.tiling == I915_TILING_NONE) {
 		if (i915->has_mmap_offset) {
 			struct drm_i915_gem_mmap_offset gem_map = { 0 };
-			gem_map.handle = bo->handles[0].u32;
+			gem_map.handle = bo->handle.u32;
 			gem_map.flags = I915_MMAP_OFFSET_WB;
 
 			/* Get the fake offset back */
@@ -850,7 +856,7 @@ static void *i915_bo_map(struct bo *bo, struct vma *vma, uint32_t map_flags)
 			      (BO_USE_RENDERSCRIPT | BO_USE_CAMERA_READ | BO_USE_CAMERA_WRITE)))
 				gem_map.flags = I915_MMAP_WC;
 
-			gem_map.handle = bo->handles[0].u32;
+			gem_map.handle = bo->handle.u32;
 			gem_map.offset = 0;
 			gem_map.size = bo->meta.total_size;
 
@@ -870,7 +876,7 @@ static void *i915_bo_map(struct bo *bo, struct vma *vma, uint32_t map_flags)
 	if (addr == MAP_FAILED) {
 		struct drm_i915_gem_mmap_gtt gem_map = { 0 };
 
-		gem_map.handle = bo->handles[0].u32;
+		gem_map.handle = bo->handle.u32;
 		ret = drmIoctl(bo->drv->fd, DRM_IOCTL_I915_GEM_MMAP_GTT, &gem_map);
 		if (ret) {
 			drv_loge("DRM_IOCTL_I915_GEM_MMAP_GTT failed\n");
@@ -895,7 +901,7 @@ static int i915_bo_invalidate(struct bo *bo, struct mapping *mapping)
 	int ret;
 	struct drm_i915_gem_set_domain set_domain = { 0 };
 
-	set_domain.handle = bo->handles[0].u32;
+	set_domain.handle = bo->handle.u32;
 	if (bo->meta.tiling == I915_TILING_NONE) {
 		set_domain.read_domains = I915_GEM_DOMAIN_CPU;
 		if (mapping->vma->map_flags & BO_MAP_WRITE)
