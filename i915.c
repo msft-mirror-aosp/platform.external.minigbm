@@ -591,6 +591,7 @@ static size_t i915_num_planes_from_modifier(struct driver *drv, uint32_t format,
 		assert(drv);
 		struct i915_device *i915 = drv->priv;
 		assert(i915 && i915->is_media_compression_enabled);
+		(void)i915;
 
 		assert(num_planes == 2);
 		return 4;
