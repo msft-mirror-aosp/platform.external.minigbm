@@ -77,16 +77,18 @@ int memfd_create_reserved_region(const std::string &buffer_name, uint64_t reserv
 	return reserved_region_fd;
 }
 
-cros_gralloc_driver *cros_gralloc_driver::get_instance()
+std::shared_ptr<cros_gralloc_driver> cros_gralloc_driver::get_instance()
 {
-	static cros_gralloc_driver s_instance;
+	static std::shared_ptr<cros_gralloc_driver> s_instance = []() {
+		return std::shared_ptr<cros_gralloc_driver>(new cros_gralloc_driver());
+	}();
 
-	if (!s_instance.is_initialized()) {
+	if (!s_instance->is_initialized()) {
 		ALOGE("Failed to initialize driver.");
 		return nullptr;
 	}
 
-	return &s_instance;
+	return s_instance;
 }
 
 static struct driver *init_try_node(int idx, char const *str)
@@ -155,9 +157,6 @@ static void drv_destroy_and_close(struct driver *drv)
 
 cros_gralloc_driver::cros_gralloc_driver() : drv_(init_try_nodes(), drv_destroy_and_close)
 {
-	char buf[PROP_VALUE_MAX];
-	property_get("ro.product.device", buf, "unknown");
-	mt8183_camera_quirk_ = !strncmp(buf, "kukui", strlen("kukui"));
 }
 
 cros_gralloc_driver::~cros_gralloc_driver()
@@ -178,14 +177,6 @@ bool cros_gralloc_driver::get_resolved_format_and_use_flags(
 	uint32_t resolved_format;
 	uint64_t resolved_use_flags;
 	struct combination *combo;
-
-	if (mt8183_camera_quirk_ && (descriptor->use_flags & BO_USE_CAMERA_READ) &&
-	    !(descriptor->use_flags & BO_USE_SCANOUT) &&
-	    descriptor->drm_format == DRM_FORMAT_FLEX_IMPLEMENTATION_DEFINED) {
-		*out_use_flags = descriptor->use_flags;
-		*out_format = DRM_FORMAT_MTISP_SXYZW10;
-		return true;
-	}
 
 	drv_resolve_format_and_use_flags(drv_.get(), descriptor->drm_format, descriptor->use_flags,
 					 &resolved_format, &resolved_use_flags);
@@ -273,16 +264,6 @@ int32_t cros_gralloc_driver::allocate(const struct cros_gralloc_buffer_descripto
 		return -errno;
 	}
 
-	/*
-	 * If there is a desire for more than one kernel buffer, this can be
-	 * removed once the ArcCodec and Wayland service have the ability to
-	 * send more than one fd. GL/Vulkan drivers may also have to modified.
-	 */
-	if (drv_num_buffers_per_bo(bo) != 1) {
-		ALOGE("Can only support one buffer per bo.");
-		goto destroy_bo;
-	}
-
 	num_planes = drv_bo_get_num_planes(bo);
 	num_fds = num_planes;
 
@@ -359,7 +340,6 @@ destroy_hnd:
 	native_handle_close(hnd);
 	native_handle_delete(hnd);
 
-destroy_bo:
 	drv_bo_destroy(bo);
 	return ret;
 }
