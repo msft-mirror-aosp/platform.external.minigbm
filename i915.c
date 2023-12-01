@@ -37,12 +37,7 @@ static const uint32_t texture_only_formats[] = { DRM_FORMAT_R8, DRM_FORMAT_NV12,
 static const uint64_t gen_modifier_order[] = { I915_FORMAT_MOD_Y_TILED_CCS, I915_FORMAT_MOD_Y_TILED,
 					       I915_FORMAT_MOD_X_TILED, DRM_FORMAT_MOD_LINEAR };
 
-static const uint64_t gen12_modifier_order_without_mc[] = { I915_FORMAT_MOD_Y_TILED_GEN12_RC_CCS,
-							    I915_FORMAT_MOD_Y_TILED,
-							    I915_FORMAT_MOD_X_TILED,
-							    DRM_FORMAT_MOD_LINEAR };
-
-static const uint64_t gen12_modifier_order_with_mc[] = {
+static const uint64_t gen12_modifier_order[] = {
 	I915_FORMAT_MOD_Y_TILED_GEN12_RC_CCS, I915_FORMAT_MOD_Y_TILED_GEN12_MC_CCS,
 	I915_FORMAT_MOD_Y_TILED, I915_FORMAT_MOD_X_TILED, DRM_FORMAT_MOD_LINEAR
 };
@@ -70,7 +65,6 @@ struct i915_device {
 	bool is_mtl;
 	int32_t num_fences_avail;
 	bool has_mmap_offset;
-	bool is_media_compression_enabled;
 };
 
 static void i915_info_from_device_id(struct i915_device *i915)
@@ -200,13 +194,12 @@ static void i915_get_modifier_order(struct i915_device *i915)
 		i915->modifier.order = xe_lpdp_modifier_order;
 		i915->modifier.count = ARRAY_SIZE(xe_lpdp_modifier_order);
 	} else if (i915->graphics_version == 12) {
-		if (i915->is_media_compression_enabled) {
-			i915->modifier.order = gen12_modifier_order_with_mc;
-			i915->modifier.count = ARRAY_SIZE(gen12_modifier_order_with_mc);
-		} else {
-			i915->modifier.order = gen12_modifier_order_without_mc;
-			i915->modifier.count = ARRAY_SIZE(gen12_modifier_order_without_mc);
-		}
+		/*
+		 * On ADL platforms of gen 12 onwards, Intel media compression is supported for
+		 * video decoding on Chrome.
+		 */
+		i915->modifier.order = gen12_modifier_order;
+		i915->modifier.count = ARRAY_SIZE(gen12_modifier_order);
 	} else if (i915->graphics_version == 11) {
 		i915->modifier.order = gen11_modifier_order;
 		i915->modifier.count = ARRAY_SIZE(gen11_modifier_order);
@@ -333,20 +326,6 @@ static int i915_add_combinations(struct driver *drv)
 				     render_not_linear);
 		drv_add_combination(drv, DRM_FORMAT_NV12, &metadata_y_tiled, nv12_usage);
 		drv_add_combination(drv, DRM_FORMAT_P010, &metadata_y_tiled, p010_usage);
-
-		/* For non-protected content, we may be able to support media
-		 * compressed buffers depending on the platform.
-		 */
-		const bool add_media_compressed_combination =
-		    i915->graphics_version == 12 && i915->is_media_compression_enabled;
-		if (add_media_compressed_combination) {
-			metadata_y_tiled.priority = 4;
-			metadata_y_tiled.modifier = I915_FORMAT_MOD_Y_TILED_GEN12_MC_CCS;
-			drv_add_combination(drv, DRM_FORMAT_NV12, &metadata_y_tiled,
-					    unset_flags(nv12_usage, BO_USE_PROTECTED));
-			drv_add_combination(drv, DRM_FORMAT_P010, &metadata_y_tiled,
-					    unset_flags(p010_usage, BO_USE_PROTECTED));
-		}
 	}
 	return 0;
 }
@@ -463,19 +442,6 @@ static int i915_init(struct driver *drv)
 	i915 = calloc(1, sizeof(*i915));
 	if (!i915)
 		return -ENOMEM;
-
-	const char *enable_intel_media_compression_env_var =
-	    getenv("ENABLE_INTEL_MEDIA_COMPRESSION");
-	if (enable_intel_media_compression_env_var == NULL) {
-		if (drv->compression)
-			drv_logd("Environment variable ENABLE_INTEL_MEDIA_COMPRESSION is not set. "
-				 "Media compression will be disabled.\n");
-		i915->is_media_compression_enabled = false;
-	} else {
-		i915->is_media_compression_enabled =
-		    (drv->compression) &&
-		    (strcmp(enable_intel_media_compression_env_var, "1") == 0);
-	}
 
 	get_param.param = I915_PARAM_CHIPSET_ID;
 	get_param.value = &(i915->device_id);
@@ -596,11 +562,6 @@ static size_t i915_num_planes_from_modifier(struct driver *drv, uint32_t format,
 		assert(num_planes == 1);
 		return 2;
 	} else if (modifier == I915_FORMAT_MOD_Y_TILED_GEN12_MC_CCS) {
-		assert(drv);
-		struct i915_device *i915 = drv->priv;
-		assert(i915 && i915->is_media_compression_enabled);
-		(void)i915;
-
 		assert(num_planes == 2);
 		return 4;
 	}
@@ -623,6 +584,19 @@ static int i915_bo_compute_metadata(struct bo *bo, uint32_t width, uint32_t heig
 		if (!combo)
 			return -EINVAL;
 		modifier = combo->metadata.modifier;
+		/*
+		 * Media compression modifiers should not be picked automatically by minigbm based
+		 * on |use_flags|. Instead the client should request them explicitly through
+		 * gbm_bo_create_with_modifiers().
+		 */
+		assert(modifier != I915_FORMAT_MOD_Y_TILED_GEN12_MC_CCS);
+		/* TODO(b/323863689): Account for driver's bandwidth compression in minigbm for
+		 * media compressed buffers. */
+	}
+	if (modifier == I915_FORMAT_MOD_Y_TILED_GEN12_MC_CCS &&
+	    !(format == DRM_FORMAT_NV12 || format == DRM_FORMAT_P010)) {
+		drv_loge("Media compression is only supported for NV12 and P010\n");
+		return -EINVAL;
 	}
 
 	/*
@@ -662,9 +636,6 @@ static int i915_bo_compute_metadata(struct bo *bo, uint32_t width, uint32_t heig
 	if (i915->graphics_version <= 8 && format == DRM_FORMAT_ARGB8888) {
 		modifier = DRM_FORMAT_MOD_LINEAR;
 	}
-
-	assert(modifier != I915_FORMAT_MOD_Y_TILED_GEN12_MC_CCS ||
-	       i915->is_media_compression_enabled);
 
 	switch (modifier) {
 	case DRM_FORMAT_MOD_LINEAR:
@@ -744,11 +715,17 @@ static int i915_bo_compute_metadata(struct bo *bo, uint32_t width, uint32_t heig
 		bo->meta.total_size = offset;
 	} else if (modifier == I915_FORMAT_MOD_Y_TILED_GEN12_RC_CCS ||
 		   modifier == I915_FORMAT_MOD_Y_TILED_GEN12_MC_CCS) {
-		assert(!(bo->meta.use_flags & BO_USE_PROTECTED));
+		/*
+		 * Media compression modifiers should only be possible via the
+		 * gbm_bo_create_with_modifiers() path, i.e., the minigbm client needs to
+		 * explicitly request it.
+		 */
 		assert(modifier != I915_FORMAT_MOD_Y_TILED_GEN12_MC_CCS ||
-		       i915->is_media_compression_enabled);
+		       use_flags == BO_USE_NONE);
 		assert(modifier != I915_FORMAT_MOD_Y_TILED_GEN12_MC_CCS ||
-		       (format == DRM_FORMAT_NV12 || format == DRM_FORMAT_P010));
+		       bo->meta.use_flags == BO_USE_NONE);
+		assert(modifier != I915_FORMAT_MOD_Y_TILED_GEN12_MC_CCS ||
+		       (!!modifiers && count > 0));
 		assert(drv_num_planes_from_format(format) > 0);
 
 		uint32_t offset = 0;
