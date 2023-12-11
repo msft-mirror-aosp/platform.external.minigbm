@@ -19,6 +19,8 @@ using aidl::android::hardware::common::NativeHandle;
 using BufferDescriptorInfoV4 =
         android::hardware::graphics::mapper::V4_0::IMapper::BufferDescriptorInfo;
 
+static const std::string STANDARD_METADATA_DATASPACE = "android.hardware.graphics.common.Dataspace";
+
 namespace aidl::android::hardware::graphics::allocator::impl {
 namespace {
 
@@ -36,7 +38,8 @@ bool Allocator::init() {
 // TODO(natsu): deduplicate with CrosGralloc4Allocator after the T release.
 ndk::ScopedAStatus Allocator::initializeMetadata(
         cros_gralloc_handle_t crosHandle,
-        const struct cros_gralloc_buffer_descriptor& crosDescriptor) {
+        const struct cros_gralloc_buffer_descriptor& crosDescriptor,
+        Dataspace initialDataspace) {
     if (!mDriver) {
         ALOGE("Failed to initializeMetadata. Driver is uninitialized.\n");
         return ToBinderStatus(AllocationError::NO_RESOURCES);
@@ -59,7 +62,7 @@ ndk::ScopedAStatus Allocator::initializeMetadata(
 
     snprintf(crosMetadata->name, CROS_GRALLOC4_METADATA_MAX_NAME_SIZE, "%s",
              crosDescriptor.name.c_str());
-    crosMetadata->dataspace = common::Dataspace::UNKNOWN;
+    crosMetadata->dataspace = initialDataspace;
     crosMetadata->blendMode = common::BlendMode::INVALID;
 
     return ndk::ScopedAStatus::ok();
@@ -110,7 +113,7 @@ ndk::ScopedAStatus Allocator::allocate(const std::vector<uint8_t>& descriptor, i
 }
 
 ndk::ScopedAStatus Allocator::allocate(const BufferDescriptorInfoV4& descriptor, int32_t* outStride,
-                                       native_handle_t** outHandle) {
+                                       native_handle_t** outHandle, Dataspace initialDataspace) {
     if (!mDriver) {
         ALOGE("Failed to allocate. Driver is uninitialized.\n");
         return ToBinderStatus(AllocationError::NO_RESOURCES);
@@ -141,7 +144,7 @@ ndk::ScopedAStatus Allocator::allocate(const BufferDescriptorInfoV4& descriptor,
 
     cros_gralloc_handle_t crosHandle = cros_gralloc_convert_handle(handle);
 
-    auto status = initializeMetadata(crosHandle, crosDescriptor);
+    auto status = initializeMetadata(crosHandle, crosDescriptor, initialDataspace);
     if (!status.isOk()) {
         ALOGE("Failed to allocate. Failed to initialize gralloc buffer metadata.");
         releaseBufferAndHandle(handle);
@@ -173,8 +176,13 @@ ndk::ScopedAStatus Allocator::allocate2(const BufferDescriptorInfo& descriptor, 
         return ToBinderStatus(AllocationError::NO_RESOURCES);
     }
 
-    if (!descriptor.additionalOptions.empty()) {
-        return ToBinderStatus(AllocationError::UNSUPPORTED);
+    Dataspace initialDataspace = Dataspace::UNKNOWN;
+
+    for (const auto& option : descriptor.additionalOptions) {
+        if (option.name != STANDARD_METADATA_DATASPACE) {
+            return ToBinderStatus(AllocationError::UNSUPPORTED);
+        }
+        initialDataspace = static_cast<Dataspace>(option.value);
     }
 
     BufferDescriptorInfoV4 descriptionV4 = convertAidlToIMapperV4Descriptor(descriptor);
@@ -183,7 +191,8 @@ ndk::ScopedAStatus Allocator::allocate2(const BufferDescriptorInfo& descriptor, 
     handles.resize(count, nullptr);
 
     for (int32_t i = 0; i < count; i++) {
-        ndk::ScopedAStatus status = allocate(descriptionV4, &outResult->stride, &handles[i]);
+        ndk::ScopedAStatus status = allocate(descriptionV4, &outResult->stride, &handles[i],
+                                             initialDataspace);
         if (!status.isOk()) {
             for (int32_t j = 0; j < i; j++) {
                 releaseBufferAndHandle(handles[j]);
@@ -209,9 +218,11 @@ ndk::ScopedAStatus Allocator::isSupported(const BufferDescriptorInfo& descriptor
         return ToBinderStatus(AllocationError::NO_RESOURCES);
     }
 
-    if (!descriptor.additionalOptions.empty()) {
-        *outResult = false;
-        return ndk::ScopedAStatus::ok();
+    for (const auto& option : descriptor.additionalOptions) {
+        if (option.name != STANDARD_METADATA_DATASPACE) {
+            *outResult = false;
+            return ndk::ScopedAStatus::ok();
+        }
     }
 
     struct cros_gralloc_buffer_descriptor crosDescriptor;
