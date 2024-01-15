@@ -252,6 +252,13 @@ static int i915_add_combinations(struct driver *drv)
 	/* P010 linear can be used for scanout too. */
 	drv_modify_combination(drv, DRM_FORMAT_P010, &metadata_linear, BO_USE_SCANOUT);
 
+	/*
+	 * Android also frequently requests YV12 formats for some camera implementations
+	 * (including the external provider implmenetation).
+	 */
+	drv_modify_combination(drv, DRM_FORMAT_YVU420_ANDROID, &metadata_linear,
+			       BO_USE_CAMERA_WRITE);
+
 	/* Android CTS tests require this. */
 	drv_add_combination(drv, DRM_FORMAT_BGR888, &metadata_linear, BO_USE_SW_MASK);
 
