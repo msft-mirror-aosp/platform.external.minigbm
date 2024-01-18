@@ -548,10 +548,26 @@ static int virgl_get_caps(struct driver *drv, union virgl_caps *caps, int *caps_
 	int ret;
 	struct drm_virtgpu_get_caps cap_args = { 0 };
 
+	memset(caps, 0, sizeof(union virgl_caps));
 	*caps_is_v2 = 0;
-	cap_args.addr = (unsigned long long)caps;
-	if (params[param_capset_fix].value) {
+
+	if (params[param_supported_capset_ids].value) {
+		drv_logi("Supported CAPSET IDs: %u.", params[param_supported_capset_ids].value);
+		if (params[param_supported_capset_ids].value & (1 << 2)) {
+			*caps_is_v2 = 1;
+		} else if (params[param_supported_capset_ids].value & (1 << 1)) {
+			*caps_is_v2 = 0;
+		} else {
+			drv_logi("Unrecognized CAPSET IDs: %u. Assuming all zero caps.",
+				 params[param_supported_capset_ids].value);
+			return 0;
+		}
+	} else if (params[param_capset_fix].value) {
 		*caps_is_v2 = 1;
+	}
+
+	cap_args.addr = (unsigned long long)caps;
+	if (*caps_is_v2) {
 		cap_args.cap_set_id = 2;
 		cap_args.size = sizeof(union virgl_caps);
 	} else {
