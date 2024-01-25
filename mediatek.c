@@ -32,6 +32,13 @@
 #define SUPPORT_YUV422
 #endif
 
+// clang-format off
+#if defined(MTK_MT8195) || \
+    defined(MTK_MT8188G)
+// clang-format on
+#define SUPPORT_P010
+#endif
+
 // All platforms except MT8173 should USE_NV12_FOR_HW_VIDEO_DECODING
 // and SUPPORT_FP16_AND_10BIT_ABGR
 // clang-format off
@@ -71,6 +78,9 @@ static const uint32_t texture_source_formats[] = {
 	DRM_FORMAT_NV21,
 	DRM_FORMAT_YUYV,
 #endif
+#ifdef SUPPORT_P010
+	DRM_FORMAT_P010,
+#endif
 #ifdef SUPPORT_FP16_AND_10BIT_ABGR
 	DRM_FORMAT_ABGR2101010,
 	DRM_FORMAT_ABGR16161616F,
@@ -83,6 +93,9 @@ static const uint32_t texture_source_formats[] = {
 static const uint32_t video_yuv_formats[] = {
 	DRM_FORMAT_NV21,
 	DRM_FORMAT_NV12,
+#ifdef SUPPORT_P010
+	DRM_FORMAT_P010,
+#endif
 	DRM_FORMAT_YUYV,
 	DRM_FORMAT_YVU420,
 	DRM_FORMAT_YVU420_ANDROID
@@ -143,6 +156,8 @@ static int mediatek_init(struct driver *drv)
 	drv_modify_combination(drv, DRM_FORMAT_NV12, &metadata,
 			       BO_USE_HW_VIDEO_DECODER | BO_USE_PROTECTED);
 #endif
+	drv_modify_combination(drv, DRM_FORMAT_P010, &metadata,
+			       BO_USE_HW_VIDEO_DECODER | BO_USE_PROTECTED);
 
 	/*
 	 * R8 format is used for Android's HAL_PIXEL_FORMAT_BLOB for input/output from
