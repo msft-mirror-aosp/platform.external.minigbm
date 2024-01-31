@@ -903,11 +903,10 @@ static int i915_bo_create_from_metadata(struct bo *bo)
 	}
 
 	/*
-	 * TODO this matches existing crosvm rutabaga_gfx/src/rutabaga_gralloc/minigbm.rs
-	 * which assumes that if device_name == "i915" the buffer should be mapped cached
-	 * into the guest.  But perhaps better decisions should be made.
+	 * TODO This seems to work.  But perhaps better decisions based on
+	 * use_flags should be made.
 	 */
-	bo->meta.cached = true;
+	bo->meta.cached = i915->has_llc;
 
 	return 0;
 }
