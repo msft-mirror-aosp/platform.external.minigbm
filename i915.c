@@ -902,11 +902,7 @@ static int i915_bo_create_from_metadata(struct bo *bo)
 		}
 	}
 
-	/*
-	 * TODO This seems to work.  But perhaps better decisions based on
-	 * use_flags should be made.
-	 */
-	bo->meta.cached = i915->has_llc;
+	bo->meta.cached = i915->has_llc && !(bo->meta.use_flags & BO_USE_SCANOUT);
 
 	return 0;
 }
