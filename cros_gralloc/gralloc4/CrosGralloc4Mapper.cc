@@ -863,6 +863,12 @@ Return<void> CrosGralloc4Mapper::listSupportedMetadataTypes(listSupportedMetadat
                     /*isSettable=*/false,
             },
             {
+                    android::gralloc4::MetadataType_Crop,
+                    "",
+                    /*isGettable=*/true,
+                    /*isSettable=*/false,
+            },
+            {
                     android::gralloc4::MetadataType_Dataspace,
                     "",
                     /*isGettable=*/true,
