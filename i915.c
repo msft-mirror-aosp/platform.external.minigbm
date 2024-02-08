@@ -581,6 +581,13 @@ static size_t i915_num_planes_from_modifier(struct driver *drv, uint32_t format,
 	return num_planes;
 }
 
+#define gbm_fls(x) ((x) ? __builtin_choose_expr(sizeof(x) == 8, \
+						64 - __builtin_clzll(x), \
+						32 - __builtin_clz(x)) : 0)
+
+#define roundup_power_of_two(x) ((x) != 0 ? 1ULL << gbm_fls((x) - 1) : 0)
+
+
 static int i915_bo_compute_metadata(struct bo *bo, uint32_t width, uint32_t height, uint32_t format,
 				    uint64_t use_flags, const uint64_t *modifiers, uint32_t count)
 {
@@ -799,27 +806,27 @@ static int i915_bo_compute_metadata(struct bo *bo, uint32_t width, uint32_t heig
 		uint32_t offset = 0, stride = 0;
 		size_t plane = 0;
 		size_t a_plane = 0;
-		/*
-		 * considering only 128 byte compression and one cache line of
-		 * aux buffer(64B) contains compression status of 4-Y tiles.
-		 * Which is 4 * (128B * 32L).
-		 * line stride(bytes) is 4 * 128B
-		 * and tile stride(lines) is 32L
-		 */
 		for(plane = 0; plane < drv_num_planes_from_format(format); plane++) {
-			stride = ALIGN(drv_stride_from_format(format, width, plane), 512);
+			uint32_t alignment = 0, val, tmpoffset = 0;
 
-			height = ALIGN(drv_height_from_format(format, height, plane), 32);
-
-			bo->meta.strides[plane] = stride;
-			/* size calculation and alignment are 64KB aligned for the generic case
-			 * size as per spec
+			/*
+			 * tile_align = 4 (for width) for CCS and
+			 * tile_width = 128, tile_height = 32 for MC CCS
 			 */
-			bo->meta.sizes[plane] = ALIGN(stride * height, 512 * 128);
+			stride = ALIGN(drv_stride_from_format(format, width, plane), 512);
+			height = ALIGN(drv_height_from_format(format, height, plane), 32);
+			bo->meta.strides[plane] = stride;
 
-			/* and a special case of 1MB aligment on MTL */
-			if (plane == 1 && (format == DRM_FORMAT_NV12 || format == DRM_FORMAT_P010))
-			  offset = ALIGN(offset, 1024 * 1024);
+			/* MTL needs 1MB Alignment */
+			bo->meta.sizes[plane] = ALIGN(stride * height, 0x100000);
+			if (plane == 1 && (format == DRM_FORMAT_NV12 || format == DRM_FORMAT_P010)) {
+				alignment = 1 << 20;
+				offset += alignment - (offset % alignment);
+				tmpoffset = offset;
+				val = roundup_power_of_two(stride);
+				if ((stride * val) > tmpoffset)
+					offset = stride * val;
+			}
 
 			bo->meta.offsets[plane] = offset;
 			offset += bo->meta.sizes[plane];
