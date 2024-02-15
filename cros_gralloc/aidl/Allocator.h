@@ -38,18 +38,21 @@ class Allocator : public BnAllocator {
     ndk::SpAIBinder createBinder() override;
 
   private:
+    using Dataspace = aidl::android::hardware::graphics::common::Dataspace;
     ndk::ScopedAStatus allocate(
             const ::android::hardware::graphics::mapper::V4_0::IMapper::BufferDescriptorInfo&
                     descriptor,
-            int32_t* outStride, native_handle_t** outHandle);
+            int32_t* outStride, native_handle_t** outHandle,
+            Dataspace initialDataspace = Dataspace::UNKNOWN);
 
     ndk::ScopedAStatus initializeMetadata(
             cros_gralloc_handle_t crosHandle,
-            const struct cros_gralloc_buffer_descriptor& crosDescriptor);
+            const struct cros_gralloc_buffer_descriptor& crosDescriptor,
+            Dataspace initialDataspace);
 
     void releaseBufferAndHandle(native_handle_t* handle);
 
-    cros_gralloc_driver* mDriver = nullptr;
+    std::shared_ptr<cros_gralloc_driver> mDriver;
 };
 
 }  // namespace aidl::android::hardware::graphics::allocator::impl
