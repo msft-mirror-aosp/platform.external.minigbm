@@ -879,7 +879,8 @@ static int i915_bo_create_from_metadata(struct bo *bo)
 		}
 	}
 
-	bo->meta.cached = i915->has_llc && !(bo->meta.use_flags & BO_USE_SCANOUT);
+	bo->meta.cached = (i915->has_llc || i915->is_mtl) &&
+			  !(bo->meta.use_flags & BO_USE_SCANOUT);
 
 	return 0;
 }
