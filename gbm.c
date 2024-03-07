@@ -87,10 +87,21 @@ PUBLIC struct gbm_surface *gbm_surface_create_with_modifiers(struct gbm_device *
 							     const uint64_t *modifiers,
 							     const unsigned int count)
 {
+	return gbm_surface_create_with_modifiers2(gbm, width, height, format, modifiers, count, 0);
+}
+
+PUBLIC struct gbm_surface *
+gbm_surface_create_with_modifiers2(struct gbm_device *gbm, uint32_t width, uint32_t height,
+				   uint32_t format, const uint64_t *modifiers,
+				   const unsigned int count, uint32_t flags)
+{
 	if (count != 0 || modifiers != NULL)
 		return NULL;
 
-	return gbm_surface_create(gbm, width, height, format, 0);
+	if (flags != 0)
+		return NULL;
+
+	return gbm_surface_create(gbm, width, height, format, flags);
 }
 
 PUBLIC struct gbm_bo *gbm_surface_lock_front_buffer(struct gbm_surface *surface)
@@ -161,7 +172,18 @@ PUBLIC struct gbm_bo *gbm_bo_create_with_modifiers(struct gbm_device *gbm, uint3
 						   uint32_t height, uint32_t format,
 						   const uint64_t *modifiers, uint32_t count)
 {
+	return gbm_bo_create_with_modifiers2(gbm, width, height, format, modifiers, count, 0);
+}
+
+PUBLIC struct gbm_bo *gbm_bo_create_with_modifiers2(struct gbm_device *gbm, uint32_t width,
+						    uint32_t height, uint32_t format,
+						    const uint64_t *modifiers,
+						    const unsigned int count, uint32_t flags)
+{
 	struct gbm_bo *bo;
+
+	if (flags != 0)
+		return NULL;
 
 	bo = gbm_bo_new(gbm, format);
 
