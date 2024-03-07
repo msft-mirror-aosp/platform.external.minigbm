@@ -434,7 +434,7 @@ uint32_t
 gbm_bo_get_stride(struct gbm_bo *bo);
 
 uint32_t
-gbm_bo_get_stride_for_plane(struct gbm_bo *bo, size_t plane);
+gbm_bo_get_stride_for_plane(struct gbm_bo *bo, int plane);
 
 uint32_t
 gbm_bo_get_format(struct gbm_bo *bo);
@@ -443,7 +443,7 @@ uint32_t
 gbm_bo_get_bpp(struct gbm_bo *bo);
 
 uint32_t
-gbm_bo_get_offset(struct gbm_bo *bo, size_t plane);
+gbm_bo_get_offset(struct gbm_bo *bo, int plane);
 
 struct gbm_device *
 gbm_bo_get_device(struct gbm_bo *bo);
@@ -461,7 +461,7 @@ int
 gbm_bo_get_plane_count(struct gbm_bo *bo);
 
 union gbm_bo_handle
-gbm_bo_get_handle_for_plane(struct gbm_bo *bo, size_t plane);
+gbm_bo_get_handle_for_plane(struct gbm_bo *bo, int plane);
 
 int
 gbm_bo_get_fd_for_plane(struct gbm_bo *bo, int plane);
