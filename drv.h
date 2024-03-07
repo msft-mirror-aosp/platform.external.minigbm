@@ -240,7 +240,7 @@ enum drv_log_level {
 
 #define _drv_log(level, format, ...)                                                               \
 	do {                                                                                       \
-		drv_log_prefix(level, "minigbm", __FILE__, __LINE__, format, ##__VA_ARGS__);       \
+		drv_log_prefix(level, "minigbm", __func__, __LINE__, format, ##__VA_ARGS__);       \
 	} while (0)
 
 #define drv_loge(format, ...) _drv_log(DRV_LOGE, format, ##__VA_ARGS__)
