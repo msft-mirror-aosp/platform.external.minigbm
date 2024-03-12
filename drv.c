@@ -6,6 +6,7 @@
 #include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <inttypes.h>
 #include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -55,6 +56,8 @@ extern const struct backend backend_virtgpu;
 extern const struct backend backend_udl;
 extern const struct backend backend_vkms;
 
+extern const struct backend backend_mock;
+
 static const struct backend *drv_backend_list[] = {
 #ifdef DRV_AMDGPU
 	&backend_amdgpu,
@@ -71,7 +74,7 @@ static const struct backend *drv_backend_list[] = {
 	&backend_evdi,	    &backend_komeda,	&backend_marvell, &backend_mediatek,
 	&backend_meson,	    &backend_nouveau,	&backend_radeon,  &backend_rockchip,
 	&backend_sun4i_drm, &backend_synaptics, &backend_udl,	  &backend_virtgpu,
-	&backend_vkms
+	&backend_vkms,	    &backend_mock
 };
 
 void drv_preload(bool load)
@@ -118,7 +121,8 @@ struct driver *drv_create(int fd)
 
 	const char *minigbm_debug;
 	minigbm_debug = drv_get_os_option(MINIGBM_DEBUG);
-	drv->compression = (minigbm_debug == NULL) || (strcmp(minigbm_debug, "nocompression") != 0);
+	drv->compression = (minigbm_debug == NULL) || (strstr(minigbm_debug, "nocompression") == NULL);
+	drv->log_bos = (minigbm_debug && strstr(minigbm_debug, "log_bos") != NULL);
 
 	drv->fd = fd;
 	drv->backend = drv_get_backend(fd);
@@ -365,6 +369,9 @@ struct bo *drv_bo_create(struct driver *drv, uint32_t width, uint32_t height, ui
 
 	drv_bo_acquire(bo);
 
+	if (drv->log_bos)
+		drv_bo_log_info(bo, "legacy created");
+
 	return bo;
 }
 
@@ -401,6 +408,9 @@ struct bo *drv_bo_create_with_modifiers(struct driver *drv, uint32_t width, uint
 	}
 
 	drv_bo_acquire(bo);
+
+	if (drv->log_bos)
+		drv_bo_log_info(bo, "created");
 
 	return bo;
 }
@@ -459,6 +469,9 @@ struct bo *drv_bo_import(struct driver *drv, struct drv_import_fd_data *data)
 
 		bo->meta.total_size += bo->meta.sizes[plane];
 	}
+
+	if (drv->log_bos)
+		drv_bo_log_info(bo, "imported");
 
 	return bo;
 
@@ -572,6 +585,11 @@ int drv_bo_unmap(struct bo *bo, struct mapping *mapping)
 out:
 	pthread_mutex_unlock(&drv->mappings_lock);
 	return ret;
+}
+
+bool drv_bo_cached(struct bo *bo)
+{
+	return bo->meta.cached;
 }
 
 int drv_bo_invalidate(struct bo *bo, struct mapping *mapping)
@@ -710,6 +728,26 @@ size_t drv_bo_get_total_size(struct bo *bo)
 	return bo->meta.total_size;
 }
 
+void drv_bo_log_info(const struct bo *bo, const char *prefix)
+{
+	const struct bo_metadata *meta = &bo->meta;
+
+	drv_logd("%s %s bo %p: %dx%d '%c%c%c%c' tiling %d plane %zu mod 0x%" PRIx64 " use 0x%" PRIx64 " size %zu\n",
+		 prefix, bo->drv->backend->name, bo,
+		 meta->width, meta->height,
+		 meta->format & 0xff,
+		 (meta->format >> 8) & 0xff,
+		 (meta->format >> 16) & 0xff,
+		 (meta->format >> 24) & 0xff,
+		 meta->tiling, meta->num_planes, meta->format_modifier,
+		 meta->use_flags, meta->total_size);
+	for (uint32_t i = 0; i < meta->num_planes; i++) {
+		drv_logd("  bo %p plane %d: offset %d size %d stride %d\n",
+			 bo, i, meta->offsets[i], meta->sizes[i],
+			 meta->strides[i]);
+	}
+}
+
 /*
  * Map internal fourcc codes back to standard fourcc codes.
  */
@@ -727,11 +765,11 @@ void drv_resolve_format_and_use_flags(struct driver *drv, uint32_t format, uint6
 						   out_use_flags);
 }
 
-void drv_log_prefix(enum drv_log_level level, const char *prefix, const char *file, int line,
+void drv_log_prefix(enum drv_log_level level, const char *prefix, const char *func, int line,
 		    const char *format, ...)
 {
 	char buf[50];
-	snprintf(buf, sizeof(buf), "[%s:%s(%d)]", prefix, basename(file), line);
+	snprintf(buf, sizeof(buf), "[%s:%s(%d)]", prefix, func, line);
 
 	va_list args;
 	va_start(args, format);

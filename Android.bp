@@ -37,6 +37,7 @@ filegroup {
 
     srcs: [
         "amdgpu.c",
+        "backend_mock.c",
         "drv.c",
         "drv_array_helpers.c",
         "drv_helpers.c",
