@@ -6,7 +6,8 @@
 
 #include "drv_priv.h"
 
-static int backend_mock_init(struct driver *drv) {
+static int backend_mock_init(struct driver *drv)
+{
 	return 0;
 }
 
