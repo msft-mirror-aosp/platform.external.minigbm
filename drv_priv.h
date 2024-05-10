@@ -27,6 +27,7 @@ struct bo_metadata {
 	uint64_t format_modifier;
 	uint64_t use_flags;
 	size_t total_size;
+	bool cached;
 
 	/*
 	 * Most of the following metadata is virtgpu cross_domain specific.  However, that backend
@@ -44,7 +45,7 @@ struct bo {
 	struct driver *drv;
 	struct bo_metadata meta;
 	bool is_test_buffer;
-	union bo_handle handles[DRV_MAX_PLANES];
+	union bo_handle handle;
 	void *priv;
 };
 
@@ -70,10 +71,12 @@ struct driver {
 	struct drv_array *mappings;
 	struct drv_array *combos;
 	bool compression;
+	bool log_bos;
 };
 
 struct backend {
 	char *name;
+	void (*preload)(bool load);
 	int (*init)(struct driver *drv);
 	void (*close)(struct driver *drv);
 	int (*bo_create)(struct bo *bo, uint32_t width, uint32_t height, uint32_t format,
@@ -90,7 +93,7 @@ struct backend {
 	/* Called on free if this bo is the last object referencing the contained GEM BOs */
 	int (*bo_destroy)(struct bo *bo);
 	int (*bo_import)(struct bo *bo, struct drv_import_fd_data *data);
-	void *(*bo_map)(struct bo *bo, struct vma *vma, size_t plane, uint32_t map_flags);
+	void *(*bo_map)(struct bo *bo, struct vma *vma, uint32_t map_flags);
 	int (*bo_unmap)(struct bo *bo, struct vma *vma);
 	int (*bo_invalidate)(struct bo *bo, struct mapping *mapping);
 	int (*bo_flush)(struct bo *bo, struct mapping *mapping);
@@ -115,10 +118,12 @@ struct backend {
 #define BO_USE_SW_MASK (BO_USE_SW_READ_OFTEN | BO_USE_SW_WRITE_OFTEN | \
 			BO_USE_SW_READ_RARELY | BO_USE_SW_WRITE_RARELY | BO_USE_FRONT_RENDERING)
 
+#define BO_USE_GPU_HW (BO_USE_RENDERING | BO_USE_TEXTURE | BO_USE_GPU_DATA_BUFFER)
+
 #define BO_USE_NON_GPU_HW (BO_USE_SCANOUT | BO_USE_CAMERA_WRITE | BO_USE_CAMERA_READ | \
 			   BO_USE_HW_VIDEO_ENCODER | BO_USE_HW_VIDEO_DECODER | BO_USE_SENSOR_DIRECT_DATA)
 
-#define BO_USE_HW_MASK	(BO_USE_NON_GPU_HW | BO_USE_RENDERING | BO_USE_TEXTURE | BO_USE_GPU_DATA_BUFFER)
+#define BO_USE_HW_MASK	(BO_USE_GPU_HW | BO_USE_NON_GPU_HW)
 
 #ifndef DRM_FORMAT_MOD_LINEAR
 #define DRM_FORMAT_MOD_LINEAR DRM_FORMAT_MOD_NONE

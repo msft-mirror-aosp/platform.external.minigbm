@@ -115,9 +115,9 @@ int32_t cros_gralloc_buffer::get_android_format() const
 	return hnd_->droid_format;
 }
 
-uint64_t cros_gralloc_buffer::get_android_usage() const
+int64_t cros_gralloc_buffer::get_android_usage() const
 {
-	return static_cast<uint64_t>(hnd_->usage);
+	return hnd_->usage;
 }
 
 int32_t cros_gralloc_buffer::increase_refcount()
@@ -137,15 +137,6 @@ int32_t cros_gralloc_buffer::lock(const struct rectangle *rect, uint32_t map_fla
 	void *vaddr = nullptr;
 
 	memset(addr, 0, DRV_MAX_PLANES * sizeof(*addr));
-
-	/*
-	 * Gralloc consumers don't support more than one kernel buffer per buffer object yet, so
-	 * just use the first kernel buffer.
-	 */
-	if (drv_num_buffers_per_bo(bo_) != 1) {
-		ALOGE("Can only support one buffer per bo.");
-		return -EINVAL;
-	}
 
 	if (map_flags) {
 		if (lock_data_[0]) {
