@@ -39,7 +39,8 @@
     defined(MTK_MT8186) || \
     defined(MTK_MT8188G) || \
     defined(MTK_MT8192) || \
-    defined(MTK_MT8195)
+    defined(MTK_MT8195) || \
+    defined(MTK_MT8196)
 // clang-format on
 #define USE_NV12_FOR_HW_VIDEO_DECODING
 #define SUPPORT_FP16_AND_10BIT_ABGR
