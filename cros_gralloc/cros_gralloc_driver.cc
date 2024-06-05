@@ -15,6 +15,7 @@
 #include <xf86drm.h>
 
 #include "../util.h"
+#include "cros_gralloc_buffer_metadata.h"
 
 // Constants taken from pipe_loader_drm.c in Mesa
 
@@ -77,16 +78,18 @@ int memfd_create_reserved_region(const std::string &buffer_name, uint64_t reserv
 	return reserved_region_fd;
 }
 
-cros_gralloc_driver *cros_gralloc_driver::get_instance()
+std::shared_ptr<cros_gralloc_driver> cros_gralloc_driver::get_instance()
 {
-	static cros_gralloc_driver s_instance;
+	static std::shared_ptr<cros_gralloc_driver> s_instance = []() {
+		return std::shared_ptr<cros_gralloc_driver>(new cros_gralloc_driver());
+	}();
 
-	if (!s_instance.is_initialized()) {
+	if (!s_instance->is_initialized()) {
 		ALOGE("Failed to initialize driver.");
 		return nullptr;
 	}
 
-	return &s_instance;
+	return s_instance;
 }
 
 static struct driver *init_try_node(int idx, char const *str)
@@ -155,9 +158,6 @@ static void drv_destroy_and_close(struct driver *drv)
 
 cros_gralloc_driver::cros_gralloc_driver() : drv_(init_try_nodes(), drv_destroy_and_close)
 {
-	char buf[PROP_VALUE_MAX];
-	property_get("ro.product.device", buf, "unknown");
-	mt8183_camera_quirk_ = !strncmp(buf, "kukui", strlen("kukui"));
 }
 
 cros_gralloc_driver::~cros_gralloc_driver()
@@ -178,14 +178,6 @@ bool cros_gralloc_driver::get_resolved_format_and_use_flags(
 	uint32_t resolved_format;
 	uint64_t resolved_use_flags;
 	struct combination *combo;
-
-	if (mt8183_camera_quirk_ && (descriptor->use_flags & BO_USE_CAMERA_READ) &&
-	    !(descriptor->use_flags & BO_USE_SCANOUT) &&
-	    descriptor->drm_format == DRM_FORMAT_FLEX_IMPLEMENTATION_DEFINED) {
-		*out_use_flags = descriptor->use_flags;
-		*out_format = DRM_FORMAT_MTISP_SXYZW10;
-		return true;
-	}
 
 	drv_resolve_format_and_use_flags(drv_.get(), descriptor->drm_format, descriptor->use_flags,
 					 &resolved_format, &resolved_use_flags);
@@ -273,20 +265,10 @@ int32_t cros_gralloc_driver::allocate(const struct cros_gralloc_buffer_descripto
 		return -errno;
 	}
 
-	/*
-	 * If there is a desire for more than one kernel buffer, this can be
-	 * removed once the ArcCodec and Wayland service have the ability to
-	 * send more than one fd. GL/Vulkan drivers may also have to modified.
-	 */
-	if (drv_num_buffers_per_bo(bo) != 1) {
-		ALOGE("Can only support one buffer per bo.");
-		goto destroy_bo;
-	}
-
 	num_planes = drv_bo_get_num_planes(bo);
 	num_fds = num_planes;
 
-	if (descriptor->reserved_region_size > 0)
+	if (descriptor->enable_metadata_fd)
 		num_fds += 1;
 
 	num_ints = ((sizeof(struct cros_gralloc_handle) - sizeof(native_handle_t)) / sizeof(int)) -
@@ -310,7 +292,11 @@ int32_t cros_gralloc_driver::allocate(const struct cros_gralloc_buffer_descripto
 		hnd->sizes[plane] = drv_bo_get_plane_size(bo, plane);
 	}
 
-	hnd->reserved_region_size = descriptor->reserved_region_size;
+	hnd->reserved_region_size = 0;
+	if (descriptor->enable_metadata_fd)
+		hnd->reserved_region_size =
+		    sizeof(struct cros_gralloc_buffer_metadata) + descriptor->client_metadata_size;
+
 	if (hnd->reserved_region_size > 0) {
 		ret = create_reserved_region(descriptor->name, hnd->reserved_region_size);
 		if (ret < 0)
@@ -332,12 +318,18 @@ int32_t cros_gralloc_driver::allocate(const struct cros_gralloc_buffer_descripto
 	hnd->magic = cros_gralloc_magic;
 	hnd->droid_format = descriptor->droid_format;
 	hnd->usage = descriptor->droid_usage;
-	hnd->total_size = descriptor->reserved_region_size + drv_bo_get_total_size(bo);
+	hnd->total_size = hnd->reserved_region_size + drv_bo_get_total_size(bo);
 
 	buffer = cros_gralloc_buffer::create(bo, hnd);
 	if (!buffer) {
 		ALOGE("Failed to allocate: failed to create cros_gralloc_buffer.");
 		ret = -1;
+		goto destroy_hnd;
+	}
+
+	ret = buffer->initialize_metadata(descriptor);
+	if (ret) {
+		ALOGE("Failed to allocate: failed to initialize cros_gralloc_buffer metadata.");
 		goto destroy_hnd;
 	}
 
@@ -359,7 +351,6 @@ destroy_hnd:
 	native_handle_close(hnd);
 	native_handle_delete(hnd);
 
-destroy_bo:
 	drv_bo_destroy(bo);
 	return ret;
 }
@@ -590,27 +581,6 @@ int32_t cros_gralloc_driver::resource_info(buffer_handle_t handle, uint32_t stri
 	}
 
 	return buffer->resource_info(strides, offsets, format_modifier);
-}
-
-int32_t cros_gralloc_driver::get_reserved_region(buffer_handle_t handle,
-						 void **reserved_region_addr,
-						 uint64_t *reserved_region_size)
-{
-	std::lock_guard<std::mutex> lock(mutex_);
-
-	auto hnd = cros_gralloc_convert_handle(handle);
-	if (!hnd) {
-		ALOGE("Invalid handle.");
-		return -EINVAL;
-	}
-
-	auto buffer = get_buffer(hnd);
-	if (!buffer) {
-		ALOGE("Invalid reference (get_reserved_region() called on unregistered handle).");
-		return -EINVAL;
-	}
-
-	return buffer->get_reserved_region(reserved_region_addr, reserved_region_size);
 }
 
 uint32_t cros_gralloc_driver::get_resolved_drm_format(uint32_t drm_format, uint64_t use_flags)

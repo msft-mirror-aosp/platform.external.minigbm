@@ -27,6 +27,7 @@ struct bo_metadata {
 	uint64_t format_modifier;
 	uint64_t use_flags;
 	size_t total_size;
+	bool cached;
 
 	/*
 	 * Most of the following metadata is virtgpu cross_domain specific.  However, that backend
@@ -44,7 +45,7 @@ struct bo {
 	struct driver *drv;
 	struct bo_metadata meta;
 	bool is_test_buffer;
-	union bo_handle handles[DRV_MAX_PLANES];
+	union bo_handle handle;
 	void *priv;
 };
 
@@ -70,6 +71,7 @@ struct driver {
 	struct drv_array *mappings;
 	struct drv_array *combos;
 	bool compression;
+	bool log_bos;
 };
 
 struct backend {

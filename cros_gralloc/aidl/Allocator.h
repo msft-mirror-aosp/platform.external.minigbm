@@ -13,7 +13,6 @@
 
 #include "cros_gralloc/cros_gralloc_driver.h"
 #include "cros_gralloc/cros_gralloc_helpers.h"
-#include "cros_gralloc/gralloc4/CrosGralloc4Metadata.h"
 
 namespace aidl::android::hardware::graphics::allocator::impl {
 
@@ -27,10 +26,10 @@ class Allocator : public BnAllocator {
                                 allocator::AllocationResult* outResult) override;
 
     ndk::ScopedAStatus allocate2(const BufferDescriptorInfo& descriptor, int32_t count,
-                                allocator::AllocationResult* outResult) override;
+                                 allocator::AllocationResult* outResult) override;
 
     ndk::ScopedAStatus isSupported(const BufferDescriptorInfo& descriptor,
-                                bool* outResult) override;
+                                   bool* outResult) override;
 
     ndk::ScopedAStatus getIMapperLibrarySuffix(std::string* outResult) override;
 
@@ -38,18 +37,17 @@ class Allocator : public BnAllocator {
     ndk::SpAIBinder createBinder() override;
 
   private:
-    ndk::ScopedAStatus allocate(
-            const ::android::hardware::graphics::mapper::V4_0::IMapper::BufferDescriptorInfo&
-                    descriptor,
-            int32_t* outStride, native_handle_t** outHandle);
+    using Dataspace = aidl::android::hardware::graphics::common::Dataspace;
 
-    ndk::ScopedAStatus initializeMetadata(
-            cros_gralloc_handle_t crosHandle,
-            const struct cros_gralloc_buffer_descriptor& crosDescriptor);
+    ndk::ScopedAStatus allocate(const struct cros_gralloc_buffer_descriptor& descriptor,
+                                int32_t count, allocator::AllocationResult* outResult);
+
+    ndk::ScopedAStatus allocateBuffer(const struct cros_gralloc_buffer_descriptor& descriptor,
+                                      int32_t* outStride, native_handle_t** outHandle);
 
     void releaseBufferAndHandle(native_handle_t* handle);
 
-    cros_gralloc_driver* mDriver = nullptr;
+    std::shared_ptr<cros_gralloc_driver> mDriver;
 };
 
 }  // namespace aidl::android::hardware::graphics::allocator::impl

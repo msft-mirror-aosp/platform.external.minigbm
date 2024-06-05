@@ -16,7 +16,6 @@
 #include "util.h"
 #include "virtgpu.h"
 
-#define CAPSET_CROSS_DOMAIN 5
 #define CAPSET_CROSS_FAKE 30
 
 static const uint32_t scanout_render_formats[] = { DRM_FORMAT_ABGR8888, DRM_FORMAT_ARGB8888,
@@ -37,6 +36,7 @@ struct cross_domain_private {
 	void *ring_addr;
 	struct drv_array *metadata_cache;
 	pthread_mutex_t metadata_cache_lock;
+	bool mt8183_camera_quirk_;
 };
 
 static void cross_domain_release_private(struct driver *drv)
@@ -245,7 +245,7 @@ static int cross_domain_init(struct driver *drv)
 	if (!params[param_context_init].value)
 		return -ENOTSUP;
 
-	if ((params[param_supported_capset_ids].value & (1 << CAPSET_CROSS_DOMAIN)) == 0)
+	if ((params[param_supported_capset_ids].value & (1 << VIRTIO_GPU_CAPSET_CROSS_DOMAIN)) == 0)
 		return -ENOTSUP;
 
 	if (!params[param_resource_blob].value)
@@ -274,7 +274,7 @@ static int cross_domain_init(struct driver *drv)
 	priv->ring_addr = MAP_FAILED;
 	drv->priv = priv;
 
-	args.cap_set_id = CAPSET_CROSS_DOMAIN;
+	args.cap_set_id = VIRTIO_GPU_CAPSET_CROSS_DOMAIN;
 	args.size = sizeof(struct CrossDomainCapabilities);
 	args.addr = (unsigned long long)&cross_domain_caps;
 
@@ -295,7 +295,7 @@ static int cross_domain_init(struct driver *drv)
 	// Intialize the cross domain context.  Create one fence context to wait for metadata
 	// queries.
 	ctx_set_params[0].param = VIRTGPU_CONTEXT_PARAM_CAPSET_ID;
-	ctx_set_params[0].value = CAPSET_CROSS_DOMAIN;
+	ctx_set_params[0].value = VIRTIO_GPU_CAPSET_CROSS_DOMAIN;
 	ctx_set_params[1].param = VIRTGPU_CONTEXT_PARAM_NUM_RINGS;
 	ctx_set_params[1].value = 1;
 
@@ -343,6 +343,10 @@ static int cross_domain_init(struct driver *drv)
 	ret = cross_domain_submit_cmd(drv, (uint32_t *)&cmd_init, cmd_init.hdr.cmd_size, false);
 	if (ret < 0)
 		goto free_private;
+
+	const char *name;
+	name = drv_get_os_option("ro.product.name");
+	priv->mt8183_camera_quirk_ = name && !strcmp(name, "kukui");
 
 	// minigbm bookkeeping
 	add_combinations(drv);
@@ -404,8 +408,7 @@ static int cross_domain_bo_create(struct bo *bo, uint32_t width, uint32_t height
 		return -errno;
 	}
 
-	for (uint32_t plane = 0; plane < bo->meta.num_planes; plane++)
-		bo->handles[plane].u32 = drm_rc_blob.bo_handle;
+	bo->handle.u32 = drm_rc_blob.bo_handle;
 
 	return 0;
 }
@@ -415,7 +418,7 @@ static void *cross_domain_bo_map(struct bo *bo, struct vma *vma, uint32_t map_fl
 	int ret;
 	struct drm_virtgpu_map gem_map = { 0 };
 
-	gem_map.handle = bo->handles[0].u32;
+	gem_map.handle = bo->handle.u32;
 	ret = drmIoctl(bo->drv->fd, DRM_IOCTL_VIRTGPU_MAP, &gem_map);
 	if (ret) {
 		drv_loge("DRM_IOCTL_VIRTGPU_MAP failed with %s\n", strerror(errno));
@@ -427,6 +430,42 @@ static void *cross_domain_bo_map(struct bo *bo, struct vma *vma, uint32_t map_fl
 		    gem_map.offset);
 }
 
+static void cross_domain_resolve_format_and_use_flags(struct driver *drv, uint32_t format,
+						      uint64_t use_flags, uint32_t *out_format,
+						      uint64_t *out_use_flags)
+{
+	struct cross_domain_private *priv = drv->priv;
+	*out_format = format;
+	*out_use_flags = use_flags;
+
+	switch (format) {
+	case DRM_FORMAT_FLEX_IMPLEMENTATION_DEFINED:
+		if (priv->mt8183_camera_quirk_ && (use_flags & BO_USE_CAMERA_READ) &&
+		    !(use_flags & BO_USE_SCANOUT)) {
+			*out_format = DRM_FORMAT_MTISP_SXYZW10;
+			break;
+		}
+		/* Common camera implementation defined format. */
+		if (use_flags & (BO_USE_CAMERA_READ | BO_USE_CAMERA_WRITE)) {
+			*out_format = DRM_FORMAT_NV12;
+		} else {
+			/* HACK: See b/28671744 */
+			*out_format = DRM_FORMAT_XBGR8888;
+			*out_use_flags &= ~BO_USE_HW_VIDEO_ENCODER;
+		}
+		break;
+	case DRM_FORMAT_FLEX_YCbCr_420_888:
+		/* Common flexible video format. */
+		*out_format = DRM_FORMAT_NV12;
+		break;
+	case DRM_FORMAT_YVU420_ANDROID:
+		*out_use_flags &= ~BO_USE_SCANOUT;
+		break;
+	default:
+		break;
+	}
+}
+
 const struct backend virtgpu_cross_domain = {
 	.name = "virtgpu_cross_domain",
 	.init = cross_domain_init,
@@ -436,5 +475,5 @@ const struct backend virtgpu_cross_domain = {
 	.bo_destroy = drv_gem_bo_destroy,
 	.bo_map = cross_domain_bo_map,
 	.bo_unmap = drv_bo_munmap,
-	.resolve_format_and_use_flags = drv_resolve_format_and_use_flags_helper,
+	.resolve_format_and_use_flags = cross_domain_resolve_format_and_use_flags,
 };

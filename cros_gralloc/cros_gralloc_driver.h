@@ -22,7 +22,9 @@
 class cros_gralloc_driver
 {
       public:
-	static cros_gralloc_driver *get_instance();
+	~cros_gralloc_driver();
+
+	static std::shared_ptr<cros_gralloc_driver> get_instance();
 	bool is_supported(const struct cros_gralloc_buffer_descriptor *descriptor);
 	int32_t allocate(const struct cros_gralloc_buffer_descriptor *descriptor,
 			 native_handle_t **out_handle);
@@ -42,9 +44,6 @@ class cros_gralloc_driver
 	int32_t resource_info(buffer_handle_t handle, uint32_t strides[DRV_MAX_PLANES],
 			      uint32_t offsets[DRV_MAX_PLANES], uint64_t *format_modifier);
 
-	int32_t get_reserved_region(buffer_handle_t handle, void **reserved_region_addr,
-				    uint64_t *reserved_region_size);
-
 	uint32_t get_resolved_drm_format(uint32_t drm_format, uint64_t use_flags);
 
 	void with_buffer(cros_gralloc_handle_t hnd,
@@ -53,7 +52,6 @@ class cros_gralloc_driver
 
       private:
 	cros_gralloc_driver();
-	~cros_gralloc_driver();
 	bool is_initialized();
 	cros_gralloc_buffer *get_buffer(cros_gralloc_handle_t hnd);
 	bool
@@ -83,7 +81,6 @@ class cros_gralloc_driver
 	std::mutex mutex_;
 	std::unordered_map<uint32_t, std::unique_ptr<cros_gralloc_buffer>> buffers_;
 	std::unordered_map<cros_gralloc_handle_t, cros_gralloc_imported_handle_info> handles_;
-	bool mt8183_camera_quirk_ = false;
 };
 
 #endif
