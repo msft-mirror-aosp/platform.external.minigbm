@@ -64,6 +64,14 @@ extern "C" {
 #define DRM_FORMAT_FLEX_IMPLEMENTATION_DEFINED	fourcc_code('9', '9', '9', '8')
 #define DRM_FORMAT_FLEX_YCbCr_420_888		fourcc_code('9', '9', '9', '9')
 
+#ifndef DRM_FORMAT_DEPTH16
+#define DRM_FORMAT_DEPTH16 fourcc_code('D', '1', '6', ' ')
+#define DRM_FORMAT_DEPTH24 fourcc_code('D', '2', '4', 'X')
+#define DRM_FORMAT_DEPTH24_STENCIL8 fourcc_code('D', '2', '4', 'S')
+#define DRM_FORMAT_DEPTH32 fourcc_code('D', '3', '2', 'F')
+#define DRM_FORMAT_DEPTH32_STENCIL8 fourcc_code('D', 'F', 'S', '8')
+#endif
+
 /* This is a 10-bit bayer format for private reprocessing on MediaTek ISP. It's
  * a private RAW format that other DRM drivers will never support and thus
  * making it not upstreamable (i.e., defined in official DRM headers). */
