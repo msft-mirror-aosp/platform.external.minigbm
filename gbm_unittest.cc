@@ -14,7 +14,7 @@
 
 class MockDrm
 {
-      public:
+ public:
 	MOCK_METHOD(drmVersionPtr, drmGetVersion, (int fd));
 	MOCK_METHOD(void, drmFreeVersion, (drmVersionPtr v));
 };
@@ -30,7 +30,7 @@ drmVersionPtr drmGetVersion(int fd)
 // Define a mock version of drmFreeVersion
 void drmFreeVersion(drmVersionPtr v)
 {
-	delete (v);
+	delete(v);
 }
 
 /* TODO : This is a protocol to add unit tests for the public APIs in minigbm.
