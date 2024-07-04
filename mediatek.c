@@ -39,7 +39,8 @@
     defined(MTK_MT8186) || \
     defined(MTK_MT8188G) || \
     defined(MTK_MT8192) || \
-    defined(MTK_MT8195)
+    defined(MTK_MT8195) || \
+    defined(MTK_MT8196)
 // clang-format on
 #define USE_NV12_FOR_HW_VIDEO_DECODING
 #define SUPPORT_FP16_AND_10BIT_ABGR
@@ -324,11 +325,25 @@ static int mediatek_bo_create_with_modifiers(struct bo *bo, uint32_t width, uint
 #endif
 	}
 
-	gem_create.size = bo->meta.total_size;
-
 	/* For protected data buffer needs to be allocated from GEM */
-	if (bo->meta.use_flags & BO_USE_PROTECTED)
+	if (bo->meta.use_flags & BO_USE_PROTECTED) {
+		if (format == DRM_FORMAT_P010) {
+			/*
+			 * Adjust the size so we don't waste tons of space. This was allocated
+			 * with 16 bpp, but we only need 10 bpp. We can safely divide by 8 because
+			 * we are aligned at a multiple higher than that.
+			 */
+			bo->meta.strides[0] = bo->meta.strides[0] * 10 / 16;
+			bo->meta.strides[1] = bo->meta.strides[1] * 10 / 16;
+			bo->meta.sizes[0] = bo->meta.sizes[0] * 10 / 16;
+			bo->meta.sizes[1] = bo->meta.sizes[1] * 10 / 16;
+			bo->meta.offsets[1] = bo->meta.sizes[0];
+			bo->meta.total_size = bo->meta.total_size * 10 / 16;
+		}
 		gem_create.flags |= DRM_MTK_GEM_CREATE_ENCRYPTED;
+	}
+
+	gem_create.size = bo->meta.total_size;
 
 	ret = drmIoctl(bo->drv->fd, DRM_IOCTL_MTK_GEM_CREATE, &gem_create);
 	if (ret) {
