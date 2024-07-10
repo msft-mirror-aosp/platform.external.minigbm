@@ -340,7 +340,7 @@ static int mediatek_bo_create_with_modifiers(struct bo *bo, uint32_t width, uint
 			bo->meta.offsets[1] = bo->meta.sizes[0];
 			bo->meta.total_size = bo->meta.total_size * 10 / 16;
 		}
-		gem_create.flags |= DRM_MTK_GEM_CREATE_ENCRYPTED;
+		gem_create.flags |= DRM_MTK_GEM_CREATE_FLAG_RESTRICTED;
 	}
 
 	gem_create.size = bo->meta.total_size;
