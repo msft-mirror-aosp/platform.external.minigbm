@@ -210,6 +210,7 @@ static int mediatek_bo_create_with_modifiers(struct bo *bo, uint32_t width, uint
 
 	const bool is_camera_write = bo->meta.use_flags & BO_USE_CAMERA_WRITE;
 	const bool is_hw_video_encoder = bo->meta.use_flags & BO_USE_HW_VIDEO_ENCODER;
+	const bool is_linear = bo->meta.use_flags & BO_USE_LINEAR;
 	const bool is_protected = bo->meta.use_flags & BO_USE_PROTECTED;
 	const bool is_scanout = bo->meta.use_flags & BO_USE_SCANOUT;
 	/*
@@ -345,6 +346,22 @@ static int mediatek_bo_create_with_modifiers(struct bo *bo, uint32_t width, uint
 		}
 		gem_create.flags |= DRM_MTK_GEM_CREATE_FLAG_RESTRICTED;
 	}
+
+	/*
+	 * For linear scanout buffers, the read/write pattern is usually linear i.e. each address is
+	 * accessed sequentially, and there are fewer chances that an address will be repeatedly
+	 * accessed.
+	 * This behavior leads to less TLB dependency and cache misses i.e. no need to translate the
+	 * same virtual address to a physical address multiple times.
+	 *
+	 * With that premise, it's safe to allow the DMA framework to fulfill such allocation
+	 * requests with non-continuous smaller chunks of memory (e.g., 4KiB single pages) which
+	 * are generally easier to allocate compared to large continuous chunks of memory, improving
+	 * memory allocation efficiency and reduce the risk of allocation failures, especially when
+	 * available memory budget is low or on memory-constrained devices.
+	 */
+	if (is_linear && is_scanout)
+		gem_create.flags |= DRM_MTK_GEM_CREATE_FLAG_ALLOC_SINGLE_PAGES;
 
 	gem_create.size = bo->meta.total_size;
 
