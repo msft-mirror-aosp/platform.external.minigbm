@@ -207,13 +207,16 @@ static int mediatek_bo_create_with_modifiers(struct bo *bo, uint32_t width, uint
 	size_t plane;
 	uint32_t stride;
 	struct drm_mtk_gem_create gem_create = { 0 };
+
+	const bool is_camera_write = bo->meta.use_flags & BO_USE_CAMERA_WRITE;
+	const bool is_hw_video_encoder = bo->meta.use_flags & BO_USE_HW_VIDEO_ENCODER;
+	const bool is_protected = bo->meta.use_flags & BO_USE_PROTECTED;
+	const bool is_scanout = bo->meta.use_flags & BO_USE_SCANOUT;
 	/*
 	 * We identify the ChromeOS Camera App buffers via these two USE flags. Those buffers need
 	 * the same alignment as the video hardware encoding.
 	 */
-	const bool is_camera_preview =
-	    (bo->meta.use_flags & BO_USE_SCANOUT) && (bo->meta.use_flags & BO_USE_CAMERA_WRITE);
-	const bool is_hw_video_encoder = bo->meta.use_flags & BO_USE_HW_VIDEO_ENCODER;
+	const bool is_camera_preview = is_scanout && is_camera_write;
 #ifdef MTK_MT8173
 	const bool is_mt8173_video_decoder = bo->meta.use_flags & BO_USE_HW_VIDEO_DECODER;
 #else
@@ -326,7 +329,7 @@ static int mediatek_bo_create_with_modifiers(struct bo *bo, uint32_t width, uint
 	}
 
 	/* For protected data buffer needs to be allocated from GEM */
-	if (bo->meta.use_flags & BO_USE_PROTECTED) {
+	if (is_protected) {
 		if (format == DRM_FORMAT_P010) {
 			/*
 			 * Adjust the size so we don't waste tons of space. This was allocated
