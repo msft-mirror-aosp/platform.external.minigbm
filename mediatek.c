@@ -39,12 +39,24 @@
     defined(MTK_MT8186) || \
     defined(MTK_MT8188G) || \
     defined(MTK_MT8192) || \
-    defined(MTK_MT8195)
+    defined(MTK_MT8195) || \
+    defined(MTK_MT8196)
 // clang-format on
 #define USE_NV12_FOR_HW_VIDEO_DECODING
 #define SUPPORT_FP16_AND_10BIT_ABGR
 #else
 #define DONT_USE_64_ALIGNMENT_FOR_VIDEO_BUFFERS
+#endif
+
+// Devices newer than MT8186 support AR30 overlays and 10-bit video.
+// clang-format off
+#if !defined(MTK_MT8173) && \
+    !defined(MTK_MT8183) && \
+    !defined(MTK_MT8186) && \
+    !defined(MTK_MT8192)
+// clang-format on
+#define SUPPORT_P010
+#define SUPPORT_AR30_OVERLAYS
 #endif
 
 // For Mali Sigurd based GPUs, the texture unit reads outside the specified texture dimensions.
@@ -71,6 +83,9 @@ static const uint32_t texture_source_formats[] = {
 	DRM_FORMAT_NV21,
 	DRM_FORMAT_YUYV,
 #endif
+#ifdef SUPPORT_P010
+	DRM_FORMAT_P010,
+#endif
 #ifdef SUPPORT_FP16_AND_10BIT_ABGR
 	DRM_FORMAT_ABGR2101010,
 	DRM_FORMAT_ABGR16161616F,
@@ -83,6 +98,9 @@ static const uint32_t texture_source_formats[] = {
 static const uint32_t video_yuv_formats[] = {
 	DRM_FORMAT_NV21,
 	DRM_FORMAT_NV12,
+#ifdef SUPPORT_P010
+	DRM_FORMAT_P010,
+#endif
 	DRM_FORMAT_YUYV,
 	DRM_FORMAT_YVU420,
 	DRM_FORMAT_YVU420_ANDROID
@@ -110,7 +128,13 @@ static int mediatek_init(struct driver *drv)
 	drv_add_combinations(drv, texture_source_formats, ARRAY_SIZE(texture_source_formats),
 			     &LINEAR_METADATA, BO_USE_TEXTURE_MASK | BO_USE_PROTECTED);
 
-	drv_add_combination(drv, DRM_FORMAT_R8, &LINEAR_METADATA, BO_USE_SW_MASK | BO_USE_LINEAR | BO_USE_PROTECTED);
+	drv_add_combination(drv, DRM_FORMAT_R8, &LINEAR_METADATA,
+			    BO_USE_SW_MASK | BO_USE_LINEAR | BO_USE_PROTECTED);
+
+#ifdef SUPPORT_AR30_OVERLAYS
+	drv_add_combination(drv, DRM_FORMAT_ARGB2101010, &LINEAR_METADATA,
+			    BO_USE_TEXTURE | BO_USE_SCANOUT | BO_USE_PROTECTED | BO_USE_LINEAR);
+#endif
 
 	/* YUYV format for video overlay and camera subsystem. */
 	drv_add_combination(drv, DRM_FORMAT_YUYV, &LINEAR_METADATA,
@@ -124,12 +148,26 @@ static int mediatek_init(struct driver *drv)
 	metadata.tiling = TILE_TYPE_LINEAR;
 	metadata.priority = 1;
 	metadata.modifier = DRM_FORMAT_MOD_LINEAR;
-	drv_modify_combination(drv, DRM_FORMAT_YVU420, &metadata, BO_USE_HW_VIDEO_DECODER | BO_USE_PROTECTED);
-	drv_modify_combination(drv, DRM_FORMAT_YVU420_ANDROID, &metadata, BO_USE_HW_VIDEO_DECODER | BO_USE_PROTECTED);
+	drv_modify_combination(drv, DRM_FORMAT_YVU420, &metadata,
+			       BO_USE_HW_VIDEO_DECODER | BO_USE_PROTECTED);
+#ifdef MTK_MT8173
+	/*
+	 * b/292507490: The MT8173 decoder can output YUV420 only. Some CTS tests feed the
+	 * decoded buffer to the hardware encoder and the tests allocate the buffer with
+	 * DRM_FORMAT_FLEX_YCbCr_420_888 with the mask of BO_USE_HW_VIDEO_ENCODER |
+	 * BO_USE_HW_VIDEO_DECODER. Therefore, we have to allocate YUV420 in the case.
+	 */
+	drv_modify_combination(drv, DRM_FORMAT_YVU420, &metadata, BO_USE_HW_VIDEO_ENCODER);
+#endif
+	drv_modify_combination(drv, DRM_FORMAT_YVU420_ANDROID, &metadata,
+			       BO_USE_HW_VIDEO_DECODER | BO_USE_PROTECTED);
 #ifdef USE_NV12_FOR_HW_VIDEO_DECODING
 	// TODO(hiroh): Switch to use NV12 for video decoder on MT8173 as well.
-	drv_modify_combination(drv, DRM_FORMAT_NV12, &metadata, BO_USE_HW_VIDEO_DECODER | BO_USE_PROTECTED);
+	drv_modify_combination(drv, DRM_FORMAT_NV12, &metadata,
+			       BO_USE_HW_VIDEO_DECODER | BO_USE_PROTECTED);
 #endif
+	drv_modify_combination(drv, DRM_FORMAT_P010, &metadata,
+			       BO_USE_HW_VIDEO_DECODER | BO_USE_PROTECTED);
 
 	/*
 	 * R8 format is used for Android's HAL_PIXEL_FORMAT_BLOB for input/output from
@@ -176,6 +214,11 @@ static int mediatek_bo_create_with_modifiers(struct bo *bo, uint32_t width, uint
 	const bool is_camera_preview =
 	    (bo->meta.use_flags & BO_USE_SCANOUT) && (bo->meta.use_flags & BO_USE_CAMERA_WRITE);
 	const bool is_hw_video_encoder = bo->meta.use_flags & BO_USE_HW_VIDEO_ENCODER;
+#ifdef MTK_MT8173
+	const bool is_mt8173_video_decoder = bo->meta.use_flags & BO_USE_HW_VIDEO_DECODER;
+#else
+	const bool is_mt8173_video_decoder = false;
+#endif
 	/*
 	 * Android sends blobs for encoding in the shape of a single-row pixel buffer. Use R8 +
 	 * single row as a proxy for Android HAL_PIXEL_FORMAT_BLOB until a drm equivalent is
@@ -203,7 +246,24 @@ static int mediatek_bo_create_with_modifiers(struct bo *bo, uint32_t width, uint
 	stride = ALIGN(stride, 64);
 #endif
 
-	if ((is_hw_video_encoder && !is_format_blob) || is_camera_preview) {
+	/*
+	 * The mediatek video decoder requires to align width and height by 64. But this is
+	 * the requirement for mediatek tiled format (e.g. MT21 and MM21). The buffers are
+	 * not allocated by minigbm. So we don't have to care about it. The tiled buffer is
+	 * converted to NV12 or YV12, which is allocated by minigbm. V4L2 MDP doesn't
+	 * require any special alignment for them.
+	 * On the other hand, the mediatek video encoder reuqires a padding on each plane.
+	 * When both video decoder and encoder use flag is masked (in some CTS test), we
+	 * align with the encoder alignment.
+	 * However, V4L2VideoDecodeAccelerator used on MT8173 fails handling the buffer with
+	 * padding, although V4L2VideoDecoder used on MT8183 and later can do. We workaround
+	 * this problem to allocate a buffer without padding on MT8173. This works because
+	 * MT8173 decoder's output NV12 is converted to YV12 buffer that is allocated with
+	 * video encoder usage mask only and thus have padding in Android.
+	 * See go/mediatek-video-buffer-alignment-note for detail.
+	 */
+	if ((is_hw_video_encoder && !is_mt8173_video_decoder && !is_format_blob) ||
+	    is_camera_preview) {
 		uint32_t aligned_height = ALIGN(height, 32);
 		uint32_t padding[DRV_MAX_PLANES] = { 0 };
 
@@ -265,11 +325,25 @@ static int mediatek_bo_create_with_modifiers(struct bo *bo, uint32_t width, uint
 #endif
 	}
 
-	gem_create.size = bo->meta.total_size;
-
 	/* For protected data buffer needs to be allocated from GEM */
-	if (bo->meta.use_flags & BO_USE_PROTECTED)
+	if (bo->meta.use_flags & BO_USE_PROTECTED) {
+		if (format == DRM_FORMAT_P010) {
+			/*
+			 * Adjust the size so we don't waste tons of space. This was allocated
+			 * with 16 bpp, but we only need 10 bpp. We can safely divide by 8 because
+			 * we are aligned at a multiple higher than that.
+			 */
+			bo->meta.strides[0] = bo->meta.strides[0] * 10 / 16;
+			bo->meta.strides[1] = bo->meta.strides[1] * 10 / 16;
+			bo->meta.sizes[0] = bo->meta.sizes[0] * 10 / 16;
+			bo->meta.sizes[1] = bo->meta.sizes[1] * 10 / 16;
+			bo->meta.offsets[1] = bo->meta.sizes[0];
+			bo->meta.total_size = bo->meta.total_size * 10 / 16;
+		}
 		gem_create.flags |= DRM_MTK_GEM_CREATE_ENCRYPTED;
+	}
+
+	gem_create.size = bo->meta.total_size;
 
 	ret = drmIoctl(bo->drv->fd, DRM_IOCTL_MTK_GEM_CREATE, &gem_create);
 	if (ret) {
@@ -432,12 +506,24 @@ static void mediatek_resolve_format_and_use_flags(struct driver *drv, uint32_t f
 			break;
 		}
 #endif
+		/*
+		 * b/292507490: The MT8173 decoder can output YUV420 only. Some CTS tests feed the
+		 * decoded buffer to the hardware encoder and the tests allocate the buffer with
+		 * DRM_FORMAT_FLEX_YCbCr_420_888 with the mask of BO_USE_HW_VIDEO_ENCODER |
+		 * BO_USE_HW_VIDEO_DECODER. Therefore, we have to allocate YUV420 in the case.
+		 */
 		if (use_flags &
 		    (BO_USE_CAMERA_READ | BO_USE_CAMERA_WRITE | BO_USE_HW_VIDEO_ENCODER)) {
+#ifndef MTK_MT8173
 			*out_format = DRM_FORMAT_NV12;
 			break;
+#else
+			if (!(use_flags & BO_USE_HW_VIDEO_DECODER)) {
+				*out_format = DRM_FORMAT_NV12;
+				break;
+			}
+#endif
 		}
-
 		/* HACK: See b/139714614 */
 		*out_format = DRM_FORMAT_YVU420;
 		*out_use_flags &= ~BO_USE_SCANOUT;

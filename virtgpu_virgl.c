@@ -52,6 +52,11 @@ static const uint32_t texture_source_formats[] = {
 	DRM_FORMAT_ABGR2101010, DRM_FORMAT_ABGR16161616F
 };
 
+static const uint32_t depth_stencil_formats[] = {
+	DRM_FORMAT_DEPTH16, DRM_FORMAT_DEPTH24, DRM_FORMAT_DEPTH24_STENCIL8,
+	DRM_FORMAT_DEPTH32, DRM_FORMAT_DEPTH32_STENCIL8
+};
+
 extern struct virtgpu_param params[];
 
 struct virgl_blob_metadata_cache {
@@ -108,6 +113,16 @@ static uint32_t translate_format(uint32_t drm_fourcc)
 	case DRM_FORMAT_YVU420:
 	case DRM_FORMAT_YVU420_ANDROID:
 		return VIRGL_FORMAT_YV12;
+	case DRM_FORMAT_DEPTH16:
+		return VIRGL_FORMAT_Z16_UNORM;
+	case DRM_FORMAT_DEPTH24:
+		return VIRGL_FORMAT_Z24X8_UNORM;
+	case DRM_FORMAT_DEPTH24_STENCIL8:
+		return VIRGL_FORMAT_Z24_UNORM_S8_UINT;
+	case DRM_FORMAT_DEPTH32:
+		return VIRGL_FORMAT_Z32_FLOAT;
+	case DRM_FORMAT_DEPTH32_STENCIL8:
+		return VIRGL_FORMAT_Z32_FLOAT_S8X24_UINT;
 	default:
 		drv_loge("Unhandled format:%d\n", drm_fourcc);
 		return 0;
@@ -549,14 +564,31 @@ static int virgl_get_caps(struct driver *drv, union virgl_caps *caps, int *caps_
 	int ret;
 	struct drm_virtgpu_get_caps cap_args = { 0 };
 
+	memset(caps, 0, sizeof(union virgl_caps));
 	*caps_is_v2 = 0;
-	cap_args.addr = (unsigned long long)caps;
-	if (params[param_capset_fix].value) {
+
+	if (params[param_supported_capset_ids].value) {
+		drv_logi("Supported CAPSET IDs: %u.", params[param_supported_capset_ids].value);
+		if (params[param_supported_capset_ids].value & (1 << VIRTIO_GPU_CAPSET_VIRGL2)) {
+			*caps_is_v2 = 1;
+		} else if (params[param_supported_capset_ids].value &
+			   (1 << VIRTIO_GPU_CAPSET_VIRGL)) {
+			*caps_is_v2 = 0;
+		} else {
+			drv_logi("Unrecognized CAPSET IDs: %u. Assuming all zero caps.",
+				 params[param_supported_capset_ids].value);
+			return 0;
+		}
+	} else if (params[param_capset_fix].value) {
 		*caps_is_v2 = 1;
-		cap_args.cap_set_id = 2;
+	}
+
+	cap_args.addr = (unsigned long long)caps;
+	if (*caps_is_v2) {
+		cap_args.cap_set_id = VIRTIO_GPU_CAPSET_VIRGL2;
 		cap_args.size = sizeof(union virgl_caps);
 	} else {
-		cap_args.cap_set_id = 1;
+		cap_args.cap_set_id = VIRTIO_GPU_CAPSET_VIRGL;
 		cap_args.size = sizeof(struct virgl_caps_v1);
 	}
 
@@ -566,7 +598,7 @@ static int virgl_get_caps(struct driver *drv, union virgl_caps *caps, int *caps_
 		*caps_is_v2 = 0;
 
 		// Fallback to v1
-		cap_args.cap_set_id = 1;
+		cap_args.cap_set_id = VIRTIO_GPU_CAPSET_VIRGL;
 		cap_args.size = sizeof(struct virgl_caps_v1);
 
 		ret = drmIoctl(drv->fd, DRM_IOCTL_VIRTGPU_GET_CAPS, &cap_args);
@@ -622,6 +654,9 @@ static int virgl_init(struct driver *drv)
 		virgl_add_combinations(drv, texture_source_formats,
 				       ARRAY_SIZE(texture_source_formats), &LINEAR_METADATA,
 				       BO_USE_TEXTURE_MASK);
+		virgl_add_combinations(drv, depth_stencil_formats,
+				       ARRAY_SIZE(depth_stencil_formats), &LINEAR_METADATA,
+				       BO_USE_RENDER_MASK | BO_USE_TEXTURE_MASK);
 		/* NV12 with scanout must flow through virgl_add_combination, so that the native
 		 * support is checked and scanout use_flag can be conditionally stripped. */
 		virgl_add_combination(drv, DRM_FORMAT_NV12, &LINEAR_METADATA,

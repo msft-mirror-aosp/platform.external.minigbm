@@ -37,21 +37,17 @@ static const uint32_t texture_only_formats[] = { DRM_FORMAT_R8, DRM_FORMAT_NV12,
 static const uint64_t gen_modifier_order[] = { I915_FORMAT_MOD_Y_TILED_CCS, I915_FORMAT_MOD_Y_TILED,
 					       I915_FORMAT_MOD_X_TILED, DRM_FORMAT_MOD_LINEAR };
 
-static const uint64_t gen12_modifier_order_without_mc[] = { I915_FORMAT_MOD_Y_TILED_GEN12_RC_CCS,
-							    I915_FORMAT_MOD_Y_TILED,
-							    I915_FORMAT_MOD_X_TILED,
-							    DRM_FORMAT_MOD_LINEAR };
-
-static const uint64_t gen12_modifier_order_with_mc[] = { I915_FORMAT_MOD_Y_TILED_GEN12_RC_CCS,
-								I915_FORMAT_MOD_Y_TILED_GEN12_MC_CCS,
-								I915_FORMAT_MOD_Y_TILED,
-								I915_FORMAT_MOD_X_TILED,
-								DRM_FORMAT_MOD_LINEAR };
+static const uint64_t gen12_modifier_order[] = { I915_FORMAT_MOD_Y_TILED_GEN12_RC_CCS,
+						 I915_FORMAT_MOD_Y_TILED_GEN12_MC_CCS,
+						 I915_FORMAT_MOD_Y_TILED, I915_FORMAT_MOD_X_TILED,
+						 DRM_FORMAT_MOD_LINEAR };
 
 static const uint64_t gen11_modifier_order[] = { I915_FORMAT_MOD_Y_TILED, I915_FORMAT_MOD_X_TILED,
 						 DRM_FORMAT_MOD_LINEAR };
 
-static const uint64_t xe_lpdp_modifier_order[] = { I915_FORMAT_MOD_4_TILED, I915_FORMAT_MOD_X_TILED,
+static const uint64_t xe_lpdp_modifier_order[] = { I915_FORMAT_MOD_4_TILED_MTL_RC_CCS,
+						   I915_FORMAT_MOD_4_TILED_MTL_MC_CCS,
+						   I915_FORMAT_MOD_4_TILED, I915_FORMAT_MOD_X_TILED,
 						   DRM_FORMAT_MOD_LINEAR };
 
 struct modifier_support_t {
@@ -70,7 +66,6 @@ struct i915_device {
 	bool is_mtl;
 	int32_t num_fences_avail;
 	bool has_mmap_offset;
-	bool is_media_compression_enabled;
 };
 
 static void i915_info_from_device_id(struct i915_device *i915)
@@ -118,11 +113,13 @@ static void i915_info_from_device_id(struct i915_device *i915)
 		0x46b3, 0x46c0, 0x46c1, 0x46c2, 0x46c3, 0x9A40, 0x9A49, 0x9A59, 0x9A60, 0x9A68,
 		0x9A70, 0x9A78, 0x9AC0, 0x9AC9, 0x9AD9, 0x9AF8, 0x4905, 0x4906, 0x4907, 0x4908
 	};
-	const uint16_t adlp_ids[] = { 0x46A0, 0x46A1, 0x46A2, 0x46A3, 0x46A6, 0x46A8, 0x46AA,
-				      0x462A, 0x4626, 0x4628, 0x46B0, 0x46B1, 0x46B2, 0x46B3,
-				      0x46C0, 0x46C1, 0x46C2, 0x46C3, 0x46D0, 0x46D1, 0x46D2 };
+	const uint16_t adlp_ids[] = { 0x46A0, 0x46A1, 0x46A2, 0x46A3, 0x46A6, 0x46A8,
+				      0x46AA, 0x462A, 0x4626, 0x4628, 0x46B0, 0x46B1,
+				      0x46B2, 0x46B3, 0x46C0, 0x46C1, 0x46C2, 0x46C3,
+				      0x46D0, 0x46D1, 0x46D2, 0x46D3, 0x46D4 };
 
-	const uint16_t rplp_ids[] = { 0xA720, 0xA721, 0xA7A0, 0xA7A1, 0xA7A8, 0xA7A9 };
+	const uint16_t rplp_ids[] = { 0xA720, 0xA721, 0xA7A0, 0xA7A1, 0xA7A8,
+				      0xA7A9, 0xA7AA, 0xA7AB, 0xA7AC, 0xA7AD };
 
 	const uint16_t mtl_ids[] = { 0x7D40, 0x7D60, 0x7D45, 0x7D55, 0x7DD5 };
 
@@ -200,13 +197,12 @@ static void i915_get_modifier_order(struct i915_device *i915)
 		i915->modifier.order = xe_lpdp_modifier_order;
 		i915->modifier.count = ARRAY_SIZE(xe_lpdp_modifier_order);
 	} else if (i915->graphics_version == 12) {
-		if (i915->is_media_compression_enabled) {
-			i915->modifier.order = gen12_modifier_order_with_mc;
-			i915->modifier.count = ARRAY_SIZE(gen12_modifier_order_with_mc);
-		} else {
-			i915->modifier.order = gen12_modifier_order_without_mc;
-			i915->modifier.count = ARRAY_SIZE(gen12_modifier_order_without_mc);
-		}
+		/*
+		 * On ADL platforms of gen 12 onwards, Intel media compression is supported for
+		 * video decoding on Chrome.
+		 */
+		i915->modifier.order = gen12_modifier_order;
+		i915->modifier.count = ARRAY_SIZE(gen12_modifier_order);
 	} else if (i915->graphics_version == 11) {
 		i915->modifier.order = gen11_modifier_order;
 		i915->modifier.count = ARRAY_SIZE(gen11_modifier_order);
@@ -308,14 +304,10 @@ static int i915_add_combinations(struct driver *drv)
 				     ARRAY_SIZE(scanout_render_formats), &metadata_4_tiled,
 				     scanout_and_render_not_linear);
 	} else {
-		struct format_metadata metadata_y_tiled = {
-			.tiling = I915_TILING_Y,
-			.priority = 3,
-			.modifier =
-			    (i915->graphics_version == 12 && i915->is_media_compression_enabled)
-				? I915_FORMAT_MOD_Y_TILED_GEN12_MC_CCS
-				: I915_FORMAT_MOD_Y_TILED
-		};
+		struct format_metadata metadata_y_tiled = { .tiling = I915_TILING_Y,
+							    .priority = 3,
+							    .modifier = I915_FORMAT_MOD_Y_TILED };
+
 /* Support y-tiled NV12 and P010 for libva */
 #ifdef I915_SCANOUT_Y_TILED
 		const uint64_t nv12_usage =
@@ -327,13 +319,6 @@ static int i915_add_combinations(struct driver *drv)
 		const uint64_t nv12_usage = BO_USE_TEXTURE | BO_USE_HW_VIDEO_DECODER;
 		const uint64_t p010_usage = nv12_usage;
 #endif
-		drv_add_combination(drv, DRM_FORMAT_NV12, &metadata_y_tiled, nv12_usage);
-		drv_add_combination(drv, DRM_FORMAT_P010, &metadata_y_tiled, p010_usage);
-
-		/* Don't allocate media compressed buffers for formats other than NV12
-		 * and P010.
-		 */
-		metadata_y_tiled.modifier = I915_FORMAT_MOD_Y_TILED;
 		drv_add_combinations(drv, render_formats, ARRAY_SIZE(render_formats),
 				     &metadata_y_tiled, render_not_linear);
 		/* Y-tiled scanout isn't available on old platforms so we add
@@ -342,6 +327,8 @@ static int i915_add_combinations(struct driver *drv)
 		drv_add_combinations(drv, scanout_render_formats,
 				     ARRAY_SIZE(scanout_render_formats), &metadata_y_tiled,
 				     render_not_linear);
+		drv_add_combination(drv, DRM_FORMAT_NV12, &metadata_y_tiled, nv12_usage);
+		drv_add_combination(drv, DRM_FORMAT_P010, &metadata_y_tiled, p010_usage);
 	}
 	return 0;
 }
@@ -459,17 +446,6 @@ static int i915_init(struct driver *drv)
 	if (!i915)
 		return -ENOMEM;
 
-	const char *enable_intel_media_compression_env_var =
-	    getenv("ENABLE_INTEL_MEDIA_COMPRESSION");
-	if (enable_intel_media_compression_env_var == NULL) {
-		drv_logd("Failed to get ENABLE_INTEL_MEDIA_COMPRESSION");
-		i915->is_media_compression_enabled = false;
-	} else {
-		i915->is_media_compression_enabled =
-		    (drv->compression) &&
-		    (strcmp(enable_intel_media_compression_env_var, "1") == 0);
-	}
-
 	get_param.param = I915_PARAM_CHIPSET_ID;
 	get_param.value = &(i915->device_id);
 	ret = drmIoctl(drv->fd, DRM_IOCTL_I915_GETPARAM, &get_param);
@@ -584,21 +560,25 @@ static size_t i915_num_planes_from_modifier(struct driver *drv, uint32_t format,
 {
 	size_t num_planes = drv_num_planes_from_format(format);
 	if (modifier == I915_FORMAT_MOD_Y_TILED_CCS ||
-	    modifier == I915_FORMAT_MOD_Y_TILED_GEN12_RC_CCS) {
+	    modifier == I915_FORMAT_MOD_Y_TILED_GEN12_RC_CCS ||
+	    modifier == I915_FORMAT_MOD_4_TILED_MTL_RC_CCS) {
 		assert(num_planes == 1);
 		return 2;
-	} else if (modifier == I915_FORMAT_MOD_Y_TILED_GEN12_MC_CCS) {
-		assert(drv);
-		struct i915_device *i915 = drv->priv;
-		assert(i915 && i915->is_media_compression_enabled);
-		(void)i915;
-
+	} else if (modifier == I915_FORMAT_MOD_Y_TILED_GEN12_MC_CCS ||
+		   modifier == I915_FORMAT_MOD_4_TILED_MTL_MC_CCS) {
 		assert(num_planes == 2);
 		return 4;
 	}
 
 	return num_planes;
 }
+
+#define gbm_fls(x)                                                                                 \
+	((x) ? __builtin_choose_expr(sizeof(x) == 8, 64 - __builtin_clzll(x),                      \
+				     32 - __builtin_clz(x))                                        \
+	     : 0)
+
+#define roundup_power_of_two(x) ((x) != 0 ? 1ULL << gbm_fls((x) - 1) : 0)
 
 static int i915_bo_compute_metadata(struct bo *bo, uint32_t width, uint32_t height, uint32_t format,
 				    uint64_t use_flags, const uint64_t *modifiers, uint32_t count)
@@ -615,6 +595,21 @@ static int i915_bo_compute_metadata(struct bo *bo, uint32_t width, uint32_t heig
 		if (!combo)
 			return -EINVAL;
 		modifier = combo->metadata.modifier;
+		/*
+		 * Media compression modifiers should not be picked automatically by minigbm based
+		 * on |use_flags|. Instead the client should request them explicitly through
+		 * gbm_bo_create_with_modifiers().
+		 */
+		assert(modifier != I915_FORMAT_MOD_Y_TILED_GEN12_MC_CCS &&
+		       modifier != I915_FORMAT_MOD_4_TILED_MTL_MC_CCS);
+		/* TODO(b/323863689): Account for driver's bandwidth compression in minigbm for
+		 * media compressed buffers. */
+	}
+	if ((modifier == I915_FORMAT_MOD_Y_TILED_GEN12_MC_CCS ||
+	     modifier == I915_FORMAT_MOD_4_TILED_MTL_MC_CCS) &&
+	    !(format == DRM_FORMAT_NV12 || format == DRM_FORMAT_P010)) {
+		drv_loge("Media compression is only supported for NV12 and P010\n");
+		return -EINVAL;
 	}
 
 	/*
@@ -655,9 +650,6 @@ static int i915_bo_compute_metadata(struct bo *bo, uint32_t width, uint32_t heig
 		modifier = DRM_FORMAT_MOD_LINEAR;
 	}
 
-	assert(modifier != I915_FORMAT_MOD_Y_TILED_GEN12_MC_CCS ||
-	       i915->is_media_compression_enabled);
-
 	switch (modifier) {
 	case DRM_FORMAT_MOD_LINEAR:
 		bo->meta.tiling = I915_TILING_NONE;
@@ -675,6 +667,8 @@ static int i915_bo_compute_metadata(struct bo *bo, uint32_t width, uint32_t heig
 		bo->meta.tiling = I915_TILING_Y;
 		break;
 	case I915_FORMAT_MOD_4_TILED:
+	case I915_FORMAT_MOD_4_TILED_MTL_RC_CCS:
+	case I915_FORMAT_MOD_4_TILED_MTL_MC_CCS:
 		bo->meta.tiling = I915_TILING_4;
 		break;
 	}
@@ -735,10 +729,17 @@ static int i915_bo_compute_metadata(struct bo *bo, uint32_t width, uint32_t heig
 		bo->meta.total_size = offset;
 	} else if (modifier == I915_FORMAT_MOD_Y_TILED_GEN12_RC_CCS ||
 		   modifier == I915_FORMAT_MOD_Y_TILED_GEN12_MC_CCS) {
+		/*
+		 * Media compression modifiers should only be possible via the
+		 * gbm_bo_create_with_modifiers() path, i.e., the minigbm client needs to
+		 * explicitly request it.
+		 */
 		assert(modifier != I915_FORMAT_MOD_Y_TILED_GEN12_MC_CCS ||
-		       i915->is_media_compression_enabled);
+		       use_flags == BO_USE_NONE);
 		assert(modifier != I915_FORMAT_MOD_Y_TILED_GEN12_MC_CCS ||
-		       (format == DRM_FORMAT_NV12 || format == DRM_FORMAT_P010));
+		       bo->meta.use_flags == BO_USE_NONE);
+		assert(modifier != I915_FORMAT_MOD_Y_TILED_GEN12_MC_CCS ||
+		       (!!modifiers && count > 0));
 		assert(drv_num_planes_from_format(format) > 0);
 
 		uint32_t offset = 0;
@@ -793,6 +794,68 @@ static int i915_bo_compute_metadata(struct bo *bo, uint32_t width, uint32_t heig
 		}
 		/* Total number of planes & sizes */
 		bo->meta.num_planes = plane + a_plane;
+		bo->meta.total_size = offset;
+	} else if (modifier == I915_FORMAT_MOD_4_TILED_MTL_RC_CCS ||
+		   modifier == I915_FORMAT_MOD_4_TILED_MTL_MC_CCS) {
+		/* Media compression modifiers should only be possible via the
+		 * gbm_bo_create_with_modifiers() path, i.e., the minigbm client needs to
+		 * explicitly request it.
+		 */
+		assert(modifier != I915_FORMAT_MOD_4_TILED_MTL_MC_CCS || use_flags == BO_USE_NONE);
+		assert(modifier != I915_FORMAT_MOD_4_TILED_MTL_MC_CCS ||
+		       bo->meta.use_flags == BO_USE_NONE);
+		assert(modifier != I915_FORMAT_MOD_4_TILED_MTL_MC_CCS ||
+		       (!!modifiers && count > 0));
+		assert(modifier != I915_FORMAT_MOD_4_TILED_MTL_MC_CCS ||
+		       (format == DRM_FORMAT_NV12 || format == DRM_FORMAT_P010 ||
+			format == DRM_FORMAT_XRGB8888 || format == DRM_FORMAT_XBGR8888));
+		assert(drv_num_planes_from_format(format) > 0);
+
+		uint32_t offset = 0, stride = 0;
+		size_t plane = 0;
+		size_t a_plane = 0;
+		for (plane = 0; plane < drv_num_planes_from_format(format); plane++) {
+			uint32_t alignment = 0, val, tmpoffset = 0;
+
+			/*
+			 * tile_align = 4 (for width) for CCS and
+			 * tile_width = 128, tile_height = 32 for MC CCS
+			 */
+			stride = ALIGN(drv_stride_from_format(format, width, plane), 512);
+			height = ALIGN(drv_height_from_format(format, height, plane), 32);
+			bo->meta.strides[plane] = stride;
+
+			/* MTL needs 1MB Alignment */
+			bo->meta.sizes[plane] = ALIGN(stride * height, 0x100000);
+			if (plane == 1 &&
+			    (format == DRM_FORMAT_NV12 || format == DRM_FORMAT_P010)) {
+				alignment = 1 << 20;
+				offset += alignment - (offset % alignment);
+				tmpoffset = offset;
+				val = roundup_power_of_two(stride);
+				if ((stride * val) > tmpoffset)
+					offset = stride * val;
+			}
+
+			bo->meta.offsets[plane] = offset;
+			offset += bo->meta.sizes[plane];
+		}
+
+		/* Aux buffer is linear and page aligned. It is placed after
+		 * other planes and aligned to main buffer stride.
+		 */
+		for (a_plane = 0; a_plane < plane; a_plane++) {
+			stride = bo->meta.strides[a_plane] / 8;
+			bo->meta.strides[a_plane + plane] = stride;
+
+			/* Aligned to page size */
+			bo->meta.sizes[a_plane + plane] =
+			    ALIGN(bo->meta.sizes[a_plane] / 256, getpagesize());
+			bo->meta.offsets[a_plane + plane] = offset;
+			/* next buffer offset */
+			offset += bo->meta.sizes[plane + a_plane];
+		}
+		bo->meta.num_planes = a_plane + plane;
 		bo->meta.total_size = offset;
 	} else {
 		return i915_bo_from_format(bo, width, height, format);
@@ -858,6 +921,9 @@ static int i915_bo_create_from_metadata(struct bo *bo)
 			return -errno;
 		}
 	}
+
+	bo->meta.cached = (i915->has_llc || i915->is_mtl) && !(bo->meta.use_flags & BO_USE_SCANOUT);
+
 	return 0;
 }
 
@@ -907,7 +973,9 @@ static void *i915_bo_map(struct bo *bo, struct vma *vma, uint32_t map_flags)
 	if ((bo->meta.format_modifier == I915_FORMAT_MOD_Y_TILED_CCS) ||
 	    (bo->meta.format_modifier == I915_FORMAT_MOD_Y_TILED_GEN12_RC_CCS) ||
 	    (bo->meta.format_modifier == I915_FORMAT_MOD_Y_TILED_GEN12_MC_CCS) ||
-	    (bo->meta.format_modifier == I915_FORMAT_MOD_4_TILED))
+	    (bo->meta.format_modifier == I915_FORMAT_MOD_4_TILED) ||
+	    (bo->meta.format_modifier == I915_FORMAT_MOD_4_TILED_MTL_RC_CCS) ||
+	    (bo->meta.format_modifier == I915_FORMAT_MOD_4_TILED_MTL_MC_CCS))
 		return MAP_FAILED;
 
 	if (bo->meta.tiling == I915_TILING_NONE) {

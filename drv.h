@@ -64,6 +64,14 @@ extern "C" {
 #define DRM_FORMAT_FLEX_IMPLEMENTATION_DEFINED	fourcc_code('9', '9', '9', '8')
 #define DRM_FORMAT_FLEX_YCbCr_420_888		fourcc_code('9', '9', '9', '9')
 
+#ifndef DRM_FORMAT_DEPTH16
+#define DRM_FORMAT_DEPTH16 fourcc_code('D', '1', '6', ' ')
+#define DRM_FORMAT_DEPTH24 fourcc_code('D', '2', '4', 'X')
+#define DRM_FORMAT_DEPTH24_STENCIL8 fourcc_code('D', '2', '4', 'S')
+#define DRM_FORMAT_DEPTH32 fourcc_code('D', '3', '2', 'F')
+#define DRM_FORMAT_DEPTH32_STENCIL8 fourcc_code('D', 'F', 'S', '8')
+#endif
+
 /* This is a 10-bit bayer format for private reprocessing on MediaTek ISP. It's
  * a private RAW format that other DRM drivers will never support and thus
  * making it not upstreamable (i.e., defined in official DRM headers). */
@@ -83,6 +91,37 @@ extern "C" {
 #ifndef I915_FORMAT_MOD_4_TILED
 #define I915_FORMAT_MOD_4_TILED         fourcc_mod_code(INTEL, 9)
 #endif
+
+#ifndef I915_FORMAT_MOD_4_TILED_MTL_RC_CCS
+//TODO: remove this defination once drm_fourcc.h contains it.
+/*
+ * Intel color control surfaces (CCS) for display ver 14 render compression.
+ *
+ * The main surface is tile4 and at plane index 0, the CCS is linear and
+ * at index 1. A 64B CCS cache line corresponds to an area of 4x1 tiles in
+ * main surface. In other words, 4 bits in CCS map to a main surface cache
+ * line pair. The main surface pitch is required to be a multiple of four
+ * tile4 widths.
+ */
+#define I915_FORMAT_MOD_4_TILED_MTL_RC_CCS fourcc_mod_code(INTEL, 13)
+#endif
+
+#ifndef I915_FORMAT_MOD_4_TILED_MTL_MC_CCS
+//TODO: remove this defination once drm_fourcc.h contains it.
+/*
+ * Intel color control surfaces (CCS) for display ver 14 media compression
+ *
+ * The main surface is tile4 and at plane index 0, the CCS is linear and
+ * at index 1. A 64B CCS cache line corresponds to an area of 4x1 tiles in
+ * main surface. In other words, 4 bits in CCS map to a main surface cache
+ * line pair. The main surface pitch is required to be a multiple of four
+ * tile4 widths. For semi-planar formats like NV12, CCS planes follow the
+ * Y and UV planes i.e., planes 0 and 1 are used for Y and UV surfaces,
+ * planes 2 and 3 for the respective CCS.
+ */
+#define I915_FORMAT_MOD_4_TILED_MTL_MC_CCS fourcc_mod_code(INTEL, 14)
+#endif
+
 // clang-format on
 struct driver;
 struct bo;
@@ -161,6 +200,8 @@ void *drv_bo_map(struct bo *bo, const struct rectangle *rect, uint32_t map_flags
 
 int drv_bo_unmap(struct bo *bo, struct mapping *mapping);
 
+bool drv_bo_cached(struct bo *bo);
+
 int drv_bo_invalidate(struct bo *bo, struct mapping *mapping);
 
 int drv_bo_flush(struct bo *bo, struct mapping *mapping);
@@ -193,6 +234,8 @@ uint64_t drv_bo_get_use_flags(struct bo *bo);
 
 size_t drv_bo_get_total_size(struct bo *bo);
 
+void drv_bo_log_info(const struct bo *bo, const char *prefix);
+
 uint32_t drv_get_standard_fourcc(uint32_t fourcc_internal);
 
 uint32_t drv_bytes_per_pixel_from_format(uint32_t format, size_t plane);
@@ -221,7 +264,7 @@ enum drv_log_level {
 
 #define _drv_log(level, format, ...)                                                               \
 	do {                                                                                       \
-		drv_log_prefix(level, "minigbm", __FILE__, __LINE__, format, ##__VA_ARGS__);       \
+		drv_log_prefix(level, "minigbm", __func__, __LINE__, format, ##__VA_ARGS__);       \
 	} while (0)
 
 #define drv_loge(format, ...) _drv_log(DRV_LOGE, format, ##__VA_ARGS__)

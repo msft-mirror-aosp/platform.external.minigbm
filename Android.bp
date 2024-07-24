@@ -37,6 +37,7 @@ filegroup {
 
     srcs: [
         "amdgpu.c",
+        "backend_mock.c",
         "drv.c",
         "drv_array_helpers.c",
         "drv_helpers.c",
@@ -115,6 +116,7 @@ cc_defaults {
         "libcutils",
         "libdmabufheap",
         "libdrm",
+        "libgralloctypes",
         "libnativewindow",
         "libsync",
         "liblog",
@@ -161,19 +163,48 @@ cc_library {
         },
         android: {
             shared_libs: [
-                "libdrm",
                 "libcutils",
-                "liblog"
+                "liblog",
+            ],
+            static_libs: [
+                "libdrm",
             ],
         },
     },
     apex_available: [
         "//apex_available:platform",
-        "com.android.virt",
+        "//apex_available:anyapex",
     ],
     vendor_available: true,
+    product_available: true,
 
     export_include_dirs: ["."],
+}
+
+// Rust bindings to minigbm, generated in a way compatible with gbm crate.
+rust_bindgen {
+    name: "libgbm_sys",
+    crate_name: "gbm_sys",
+    wrapper_src: "rust/gbm_wrapper.h",
+    source_stem: "bindings",
+    bindgen_flags: [
+        "--blocklist-type=__BINDGEN_TMP_.*",
+        "--allowlist-type=^gbm_.*$",
+        "--allowlist-function=^gbm_.*$",
+        "--allowlist-var=GBM_.*|gbm_.*$",
+        "--constified-enum-module=^gbm_.*$",
+    ],
+    shared_libs: ["libgbm"],
+    host_supported: true,
+    vendor_available: true,
+    product_available: true,
+    apex_available: [
+        "//apex_available:anyapex",
+        "//apex_available:platform",
+    ],
+    visibility: [
+        "//external/rust/crates/gbm",
+    ],
 }
 
 // Generic
