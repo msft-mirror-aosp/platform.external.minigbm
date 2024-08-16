@@ -121,7 +121,8 @@ struct driver *drv_create(int fd)
 
 	const char *minigbm_debug;
 	minigbm_debug = drv_get_os_option(MINIGBM_DEBUG);
-	drv->compression = (minigbm_debug == NULL) || (strstr(minigbm_debug, "nocompression") == NULL);
+	drv->compression =
+	    (minigbm_debug == NULL) || (strstr(minigbm_debug, "nocompression") == NULL);
 	drv->log_bos = (minigbm_debug && strstr(minigbm_debug, "log_bos") != NULL);
 
 	drv->fd = fd;
@@ -732,19 +733,15 @@ void drv_bo_log_info(const struct bo *bo, const char *prefix)
 {
 	const struct bo_metadata *meta = &bo->meta;
 
-	drv_logd("%s %s bo %p: %dx%d '%c%c%c%c' tiling %d plane %zu mod 0x%" PRIx64 " use 0x%" PRIx64 " size %zu\n",
-		 prefix, bo->drv->backend->name, bo,
-		 meta->width, meta->height,
-		 meta->format & 0xff,
-		 (meta->format >> 8) & 0xff,
-		 (meta->format >> 16) & 0xff,
-		 (meta->format >> 24) & 0xff,
-		 meta->tiling, meta->num_planes, meta->format_modifier,
+	drv_logd("%s %s bo %p: %dx%d '%c%c%c%c' tiling %d plane %zu mod 0x%" PRIx64
+		 " use 0x%" PRIx64 " size %zu\n",
+		 prefix, bo->drv->backend->name, bo, meta->width, meta->height, meta->format & 0xff,
+		 (meta->format >> 8) & 0xff, (meta->format >> 16) & 0xff,
+		 (meta->format >> 24) & 0xff, meta->tiling, meta->num_planes, meta->format_modifier,
 		 meta->use_flags, meta->total_size);
 	for (uint32_t i = 0; i < meta->num_planes; i++) {
-		drv_logd("  bo %p plane %d: offset %d size %d stride %d\n",
-			 bo, i, meta->offsets[i], meta->sizes[i],
-			 meta->strides[i]);
+		drv_logd("  bo %p plane %d: offset %d size %d stride %d\n", bo, i, meta->offsets[i],
+			 meta->sizes[i], meta->strides[i]);
 	}
 }
 
