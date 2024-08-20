@@ -6,25 +6,9 @@
 
 #ifdef DRV_AMDGPU
 
-// Avoid transitively including a bunch of unnecessary headers.
-#define GL_GLEXT_LEGACY
-#include "GL/internal/dri_interface.h"
-#undef GL_GLEXT_LEGACY
-
 #include "drv.h"
 
-struct dri_driver {
-	int fd;
-	void *driver_handle;
-	__DRIscreen *device;
-	__DRIcontext *context; /* Needed for map/unmap operations. */
-	const __DRIextension **extensions;
-	const __DRIcoreExtension *core_extension;
-	const __DRIdri2Extension *dri2_extension;
-	const __DRIimageExtension *image_extension;
-	const __DRI2flushExtension *flush_extension;
-	const __DRIconfig **configs;
-};
+struct dri_driver;
 
 void *dri_dlopen(const char *dri_so_path);
 void dri_dlclose(void *dri_so_handle);

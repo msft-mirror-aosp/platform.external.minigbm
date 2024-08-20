@@ -22,6 +22,24 @@
 #include "drv_priv.h"
 #include "util.h"
 
+// Avoid transitively including a bunch of unnecessary headers.
+#define GL_GLEXT_LEGACY
+#include "GL/internal/dri_interface.h"
+#undef GL_GLEXT_LEGACY
+
+struct dri_driver {
+	int fd;
+	void *driver_handle;
+	__DRIscreen *device;
+	__DRIcontext *context; /* Needed for map/unmap operations. */
+	const __DRIextension **extensions;
+	const __DRIcoreExtension *core_extension;
+	const __DRIdri2Extension *dri2_extension;
+	const __DRIimageExtension *image_extension;
+	const __DRI2flushExtension *flush_extension;
+	const __DRIconfig **configs;
+};
+
 static const struct {
 	uint32_t drm_format;
 	int dri_image_format;
