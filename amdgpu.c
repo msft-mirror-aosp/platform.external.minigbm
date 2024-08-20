@@ -641,7 +641,7 @@ static int amdgpu_create_bo(struct bo *bo, uint32_t width, uint32_t height, uint
 
 		return dri_bo_create(priv->dri, bo, width, height, format, use_flags);
 	} else if (combo->metadata.tiling == TILE_TYPE_DRI_MODIFIER) {
-		return dri_bo_create_with_modifiers(priv->dri, bo, width, height, format,
+		return dri_bo_create_with_modifiers(priv->dri, bo, width, height, format, use_flags,
 						    &combo->metadata.modifier, 1);
 	}
 
@@ -662,7 +662,8 @@ static int amdgpu_create_bo_with_modifiers(struct bo *bo, uint32_t width, uint32
 	if (only_use_linear)
 		return amdgpu_create_bo_linear(bo, width, height, format, BO_USE_SCANOUT);
 
-	return dri_bo_create_with_modifiers(priv->dri, bo, width, height, format, modifiers, count);
+	return dri_bo_create_with_modifiers(priv->dri, bo, width, height, format, 0, modifiers,
+					    count);
 }
 
 static int amdgpu_import_bo(struct bo *bo, struct drv_import_fd_data *data)

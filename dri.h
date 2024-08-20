@@ -19,8 +19,8 @@ void dri_close(struct dri_driver *dri);
 int dri_bo_create(struct dri_driver *dri, struct bo *bo, uint32_t width, uint32_t height,
 		  uint32_t format, uint64_t use_flags);
 int dri_bo_create_with_modifiers(struct dri_driver *dri, struct bo *bo, uint32_t width,
-				 uint32_t height, uint32_t format, const uint64_t *modifiers,
-				 uint32_t modifier_count);
+				 uint32_t height, uint32_t format, uint64_t use_flags,
+				 const uint64_t *modifiers, uint32_t modifier_count);
 int dri_bo_import(struct dri_driver *dri, struct bo *bo, struct drv_import_fd_data *data);
 int dri_bo_release(struct dri_driver *dri, struct bo *bo);
 int dri_bo_destroy(struct dri_driver *dri, struct bo *bo);

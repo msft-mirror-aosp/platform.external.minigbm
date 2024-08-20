@@ -303,8 +303,8 @@ free_image:
 }
 
 int dri_bo_create_with_modifiers(struct dri_driver *dri, struct bo *bo, uint32_t width,
-				 uint32_t height, uint32_t format, const uint64_t *modifiers,
-				 uint32_t modifier_count)
+				 uint32_t height, uint32_t format, uint64_t use_flags,
+				 const uint64_t *modifiers, uint32_t modifier_count)
 {
 	int ret, dri_format;
 
