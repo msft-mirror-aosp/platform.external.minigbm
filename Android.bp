@@ -161,6 +161,7 @@ cc_library {
         ":minigbm_core_files",
         "gbm.c",
         "gbm_helpers.c",
+        "minigbm_helpers.c",
     ],
 
     cflags: select(soong_config_variable("minigbm", "platform"), {
