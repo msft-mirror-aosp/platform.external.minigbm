@@ -170,9 +170,17 @@ static int cross_domain_metadata_query(struct driver *drv, struct bo_metadata *m
 
 	cmd_get_reqs.width = metadata->width;
 	cmd_get_reqs.height = metadata->height;
-	cmd_get_reqs.drm_format =
-	    (metadata->format == DRM_FORMAT_YVU420_ANDROID) ? DRM_FORMAT_YVU420 : metadata->format;
+	cmd_get_reqs.drm_format = metadata->format;
 	cmd_get_reqs.flags = metadata->use_flags;
+
+	// HACK(b/360937659): see also: b/172389166,  for history
+	// host minigbm has a hack that recognizes DRM_FORMAT_YVU420 + BO_USE_LINEAR and replaces
+	// the format internally back to DRM_FORMAT_YVU420_ANDROID to use the approrpriate layout
+	// rules.
+	if (cmd_get_reqs.drm_format == DRM_FORMAT_YVU420_ANDROID) {
+		cmd_get_reqs.drm_format = DRM_FORMAT_YVU420;
+		cmd_get_reqs.flags |= BO_USE_LINEAR;
+	}
 
 	/*
 	 * It is possible to avoid blocking other bo_create() calls by unlocking before
