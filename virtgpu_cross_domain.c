@@ -152,7 +152,7 @@ static int cross_domain_metadata_query(struct driver *drv, struct bo_metadata *m
 	struct cross_domain_private *priv = drv->priv;
 	struct CrossDomainGetImageRequirements cmd_get_reqs;
 	uint32_t *addr = (uint32_t *)priv->ring_addr;
-	uint32_t plane, remaining_size;
+	uint32_t plane;
 
 	memset(&cmd_get_reqs, 0, sizeof(cmd_get_reqs));
 	pthread_mutex_lock(&priv->metadata_cache_lock);
@@ -204,15 +204,12 @@ static int cross_domain_metadata_query(struct driver *drv, struct bo_metadata *m
 	metadata->memory_idx = addr[14];
 	metadata->physical_device_idx = addr[15];
 
-	remaining_size = metadata->total_size;
-	for (plane = 0; plane < metadata->num_planes; plane++) {
-		if (plane != 0) {
-			metadata->sizes[plane - 1] = metadata->offsets[plane];
-			remaining_size -= metadata->offsets[plane];
-		}
+	for (plane = 1; plane < metadata->num_planes; plane++) {
+		metadata->sizes[plane - 1] =
+		    metadata->offsets[plane] - metadata->offsets[plane - 1];
 	}
+	metadata->sizes[plane - 1] = metadata->total_size - metadata->offsets[plane - 1];
 
-	metadata->sizes[plane - 1] = remaining_size;
 	drv_array_append(priv->metadata_cache, metadata);
 
 out_unlock:
