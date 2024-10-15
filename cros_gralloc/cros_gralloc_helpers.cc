@@ -96,7 +96,7 @@ uint32_t cros_gralloc_convert_format(int format)
 static inline void handle_usage(uint64_t *gralloc_usage, uint64_t gralloc_mask,
 				uint64_t *bo_use_flags, uint64_t bo_mask)
 {
-	if (((*gralloc_usage) & gralloc_mask) == gralloc_mask) {
+	if ((*gralloc_usage) & gralloc_mask) {
 		(*gralloc_usage) &= ~gralloc_mask;
 		(*bo_use_flags) |= bo_mask;
 	}
