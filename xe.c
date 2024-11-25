@@ -55,29 +55,38 @@ static void xe_info_from_device_id(struct xe_device *xe)
 	xe->is_xelpd = false;
 	xe->is_mtl_or_newer = false;
 
-	/* Gen 12 */
-	for (i = 0; i < ARRAY_SIZE(gen12_ids); i++)
-		if (gen12_ids[i] == xe->device_id)
-			xe->graphics_version = 12;
-
-	for (i = 0; i < ARRAY_SIZE(adlp_ids); i++)
+	/* search lists from most-->least specific */
+	for (i = 0; i < ARRAY_SIZE(adlp_ids); i++) {
 		if (adlp_ids[i] == xe->device_id) {
 			xe->is_xelpd = true;
 			xe->graphics_version = 12;
+			return;
 		}
+	}
 
-	for (i = 0; i < ARRAY_SIZE(rplp_ids); i++)
+	for (i = 0; i < ARRAY_SIZE(rplp_ids); i++) {
 		if (rplp_ids[i] == xe->device_id) {
 			xe->is_xelpd = true;
 			xe->graphics_version = 12;
+			return;
 		}
+	}
 
-	for (i = 0; i < ARRAY_SIZE(mtl_ids); i++)
+	for (i = 0; i < ARRAY_SIZE(mtl_ids); i++) {
 		if (mtl_ids[i] == xe->device_id) {
 			xe->graphics_version = 12;
 			xe->is_mtl_or_newer = true;
 			return;
 		}
+	}
+
+	/* Gen 12 */
+	for (i = 0; i < ARRAY_SIZE(gen12_ids); i++) {
+		if (gen12_ids[i] == xe->device_id) {
+			xe->graphics_version = 12;
+			return;
+		}
+	}
 }
 
 static void xe_get_modifier_order(struct xe_device *xe)
