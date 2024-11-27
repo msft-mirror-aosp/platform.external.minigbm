@@ -453,6 +453,7 @@ static size_t xe_num_planes_from_modifier(struct driver *drv, uint32_t format, u
 static int xe_bo_compute_metadata(struct bo *bo, uint32_t width, uint32_t height, uint32_t format,
 				    uint64_t use_flags, const uint64_t *modifiers, uint32_t count)
 {
+	int ret = 0;
 	uint64_t modifier;
 	struct xe_device *xe = bo->drv->priv;
 
@@ -520,7 +521,8 @@ static int xe_bo_compute_metadata(struct bo *bo, uint32_t width, uint32_t height
 		 * aligning to 32 bytes here.
 		 */
 		uint32_t stride = ALIGN(width, 32);
-		return drv_bo_from_format(bo, stride, 1, height, format);
+		ret = drv_bo_from_format(bo, stride, 1, height, format);
+		bo->meta.total_size = ALIGN(bo->meta.total_size, getpagesize());
 	} else if (modifier == I915_FORMAT_MOD_Y_TILED_CCS) {
 		/*
 		 * For compressed surfaces, we need a color control surface
@@ -597,10 +599,10 @@ static int xe_bo_compute_metadata(struct bo *bo, uint32_t width, uint32_t height
 		bo->meta.num_planes = xe_num_planes_from_modifier(bo->drv, format, modifier);
 		bo->meta.total_size = bo->meta.sizes[0] + bo->meta.sizes[1];
 	} else {
-		return xe_bo_from_format(bo, width, height, format);
+		ret = xe_bo_from_format(bo, width, height, format);
 	}
 
-	return 0;
+	return ret;
 }
 
 static int xe_bo_create_from_metadata(struct bo *bo)
