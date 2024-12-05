@@ -608,34 +608,26 @@ static int xe_bo_compute_metadata(struct bo *bo, uint32_t width, uint32_t height
 static int xe_bo_create_from_metadata(struct bo *bo)
 {
 	int ret;
-	uint32_t vm = 0;
 
-	struct drm_xe_vm_create create = {
-		.flags = DRM_XE_VM_CREATE_FLAG_SCRATCH_PAGE,
-	};
-
-	ret = drmIoctl(bo->drv->fd, DRM_IOCTL_XE_VM_CREATE, &create);
-	if (ret)
-		return -errno;
-
-	/* From xe_drm.h: If a VM is specified, this BO must:
-	* 1. Only ever be bound to that VM.
-	* 2. Cannot be exported as a PRIME fd.
-	*.vm_id = alloc_flags & ANV_BO_ALLOC_EXTERNAL ? 0 : device->vm_id,
-	* Should all buffers be defined as external? See here: https://gitlab.freedesktop.org/mesa/mesa/-/blob/main/src/intel/vulkan/xe/anv_kmd_backend.c?ref_type=heads#L60
-	*/
-	vm = 0;
+	uint32_t flags = 0;
+	uint32_t cpu_caching;
+	if (bo->meta.use_flags & BO_USE_SCANOUT) {
+		flags |= DRM_XE_GEM_CREATE_FLAG_SCANOUT;
+		cpu_caching = DRM_XE_GEM_CPU_CACHING_WC;
+	} else {
+		cpu_caching = DRM_XE_GEM_CPU_CACHING_WB;
+	}
 
 	struct drm_xe_gem_create gem_create = {
-	     .vm_id = vm,
+	     .vm_id = 0, /* ensure exportable to PRIME fd */
 	     .size = bo->meta.total_size,
-	     .flags = DRM_XE_GEM_CREATE_FLAG_SCANOUT,
+	     .flags = flags,
+	     .cpu_caching = cpu_caching,
 	};
 
 	/* FIXME: let's assume iGPU with SYSMEM is only supported */
 	gem_create.placement |= BITFIELD_BIT(DRM_XE_MEM_REGION_CLASS_SYSMEM);
 
-	gem_create.cpu_caching = DRM_XE_GEM_CPU_CACHING_WC;
 	ret = drmIoctl(bo->drv->fd, DRM_IOCTL_XE_GEM_CREATE, &gem_create);
 	if (ret)
 		return -errno;
