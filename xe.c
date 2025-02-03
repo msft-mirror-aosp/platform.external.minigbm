@@ -305,6 +305,37 @@ data_query_failed:
 	return false;
 }
 
+static bool xe_device_probe(struct driver *drv, struct xe_device *xe)
+{
+	/* Retrieve the device info by querying KMD through IOCTL
+	*/
+	struct drm_xe_device_query query = {
+		.extensions = 0,
+		.query = DRM_XE_DEVICE_QUERY_CONFIG,
+		.size = 0,
+		.data = 0,
+	};
+
+	if(drmIoctl(drv->fd, DRM_IOCTL_XE_DEVICE_QUERY, &query))
+		return false;
+
+	struct drm_xe_query_config *config = calloc(1, query.size);
+	if(!config)
+		return false;
+
+	query.data = (uintptr_t)config;
+	if(drmIoctl(drv->fd, DRM_IOCTL_XE_DEVICE_QUERY, &query)){
+		free(config);
+		return false;
+	}
+
+	xe->device_id = ((config->info[DRM_XE_QUERY_CONFIG_REV_AND_DEVICE_ID] << 16)>>16) & 0xFFFF;
+	xe->revision = (config->info[DRM_XE_QUERY_CONFIG_REV_AND_DEVICE_ID] >> 16) & 0xFFFF;
+
+	free(config);
+	return true;
+}
+
 static int xe_init(struct driver *drv)
 {
 	struct xe_device *xe;
@@ -313,13 +344,11 @@ static int xe_init(struct driver *drv)
 	if (!xe)
 		return -ENOMEM;
 
-	drmDevicePtr drmdev = NULL;
-	if(drmGetDevice2(drv->fd, DRM_DEVICE_GET_PCI_REVISION, &drmdev)){
-		drv_loge("DRM_DEVICE_GET_PCI_REVISION failed\n");
-		return -errno;
+	if(!xe_device_probe(drv, xe)){
+		drv_loge("Failed to query device id using DRM_IOCTL_XE_DEVICE_QUERY");
+		return -EINVAL;
 	}
 
-	xe->device_id = drmdev->deviceinfo.pci->device_id;
 	xe_query_config(drv, xe);
 
 	/* must call before xe->graphics_version is used anywhere else */
