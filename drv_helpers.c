@@ -15,7 +15,6 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include <xf86drm.h>
-#include <linux/dma-buf.h>
 
 #ifdef __ANDROID__
 #include <cutils/properties.h>
