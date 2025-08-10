@@ -74,6 +74,11 @@
 #define SUPPORT_PROTECTED_DMA_HEAP
 #endif
 
+// Needed by clients on Android using VK_ANDROID_external_format_resolve.
+#if defined(ANDROID) && defined(MTK_MT8196)
+#define SUPPORT_YUV_RENDER_TARGET
+#endif
+
 struct mediatek_private_drv_data {
 	int dma_heap_fd;
 
@@ -202,6 +207,15 @@ static int mediatek_init(struct driver *drv)
 	drv_add_combination(drv, DRM_FORMAT_ARGB2101010, &LINEAR_METADATA,
 			    BO_USE_TEXTURE | BO_USE_SCANOUT | protected | BO_USE_LINEAR);
 #endif
+
+#ifdef SUPPORT_YUV_RENDER_TARGET
+	drv_modify_combination(drv, DRM_FORMAT_NV12, &LINEAR_METADATA, BO_USE_RENDER_MASK);
+	drv_modify_combination(drv, DRM_FORMAT_YVU420_ANDROID, &LINEAR_METADATA,
+			       BO_USE_RENDER_MASK);
+#ifdef SUPPORT_P010
+	drv_modify_combination(drv, DRM_FORMAT_P010, &LINEAR_METADATA, BO_USE_RENDER_MASK);
+#endif /* SUPPORT_P010 */
+#endif /* SUPPORT_YUV_RENDER_TARGET */
 
 	/* YUYV format for video overlay and camera subsystem. */
 	drv_add_combination(drv, DRM_FORMAT_YUYV, &LINEAR_METADATA,
