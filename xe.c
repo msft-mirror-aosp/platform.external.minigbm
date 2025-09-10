@@ -108,6 +108,14 @@ static void xe_info_from_device_id(struct xe_device *xe)
 			return;
 		}
 	}
+
+	for (i = 0; i < ARRAY_SIZE(nvl_ids); i++) {
+		if (nvl_ids[i] == xe->device_id) {
+			xe->graphics_version = 30;
+			xe->is_mtl_or_newer = true;
+			return;
+		}
+	}
 }
 
 static void xe_get_modifier_order(struct xe_device *xe)
