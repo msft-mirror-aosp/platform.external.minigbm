@@ -10,6 +10,7 @@
 #include <cutils/properties.h>
 #include <fcntl.h>
 #include <hardware/gralloc.h>
+#include <linux/dma-buf.h>
 #include <sys/mman.h>
 #include <syscall.h>
 #include <xf86drm.h>
@@ -285,6 +286,14 @@ int32_t cros_gralloc_driver::allocate(const struct cros_gralloc_buffer_descripto
 		ret = drv_bo_get_plane_fd(bo, plane);
 		if (ret < 0)
 			goto destroy_hnd;
+
+		if (plane == 0) {
+			std::string truncated_name =
+				descriptor->name.substr(0, DMA_BUF_NAME_LEN - 1);
+			// Setting the name is just for debugging convenience, so
+			// don't bother checking the return code.
+			ioctl(ret, DMA_BUF_SET_NAME, truncated_name.c_str());
+		}
 
 		hnd->fds[plane] = ret;
 		hnd->strides[plane] = drv_bo_get_plane_stride(bo, plane);
