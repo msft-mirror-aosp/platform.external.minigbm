@@ -120,7 +120,11 @@ uint64_t cros_gralloc_convert_usage(uint64_t usage)
 	/* HWC wants to use display hardware, but can defer to OpenGL. */
 	handle_usage(&usage, GRALLOC_USAGE_HW_COMPOSER, &use_flags,
 		     BO_USE_SCANOUT | BO_USE_TEXTURE);
+#ifdef DRMHWC_ON_VIRTGPU
+	handle_usage(&usage, GRALLOC_USAGE_HW_FB, &use_flags, BO_USE_LINEAR);
+#else
 	handle_usage(&usage, GRALLOC_USAGE_HW_FB, &use_flags, BO_USE_NONE);
+#endif
 	/*
 	 * This flag potentially covers external display for the normal drivers (i915/rockchip) and
 	 * usb monitors (evdi/udl). It's complicated so ignore it.
