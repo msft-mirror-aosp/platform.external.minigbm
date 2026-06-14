@@ -408,12 +408,24 @@ int dri_bo_destroy(struct dri_driver *dri, struct bo *bo)
 void *dri_bo_map(struct dri_driver *dri, struct bo *bo, struct vma *vma, size_t plane,
 		 uint32_t map_flags)
 {
+	/* backend::bo_map expects the base addr of the entire bo.
+	 * __DRIimageExtension::mapImage, on the other hand, returns the base
+	 * addr of an region of a plane. As a result, we
+	 *
+	 *  - only support plane 0,
+	 *  - set the region to the entire plane, and
+	 *  - fix up the returned addr.
+	 */
+	assert(!plane);
+
 	/* GBM flags and DRI flags are the same. */
 	vma->addr = dri->image_extension->mapImage(dri->context, bo->priv, 0, 0, bo->meta.width,
 						   bo->meta.height, map_flags,
 						   (int *)&vma->map_strides[plane], &vma->priv);
 	if (!vma->addr)
 		return MAP_FAILED;
+
+	vma->addr = (uint8_t *)vma->addr - bo->meta.offsets[plane];
 
 	return vma->addr;
 }
