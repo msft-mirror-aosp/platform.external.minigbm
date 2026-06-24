@@ -237,7 +237,7 @@ static int msm_init(struct driver *drv)
 	    (BO_USE_RENDERSCRIPT | BO_USE_SW_MASK | BO_USE_LINEAR | BO_USE_FRONT_RENDERING);
 
 	drv_add_combinations(drv, render_target_formats, ARRAY_SIZE(render_target_formats),
-			     &LINEAR_METADATA, render_use_flags);
+			     &LINEAR_METADATA, render_use_flags | BO_USE_GPU_DATA_BUFFER);
 
 	drv_add_combinations(drv, texture_source_formats, ARRAY_SIZE(texture_source_formats),
 			     &LINEAR_METADATA, texture_use_flags);
