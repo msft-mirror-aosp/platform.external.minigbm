@@ -646,7 +646,7 @@ const char *drv_get_os_option(const char *name)
 #ifdef __ANDROID__
 	if (!ret) {
 		static char prop[PROPERTY_VALUE_MAX];
-		return property_get(name, prop, NULL) > 1 ? prop : NULL;
+		return property_get(name, prop, NULL) > 0 ? prop : NULL;
 	}
 #endif
 	return ret;
