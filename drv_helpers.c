@@ -542,6 +542,11 @@ int drv_get_prot(uint32_t map_flags)
 void drv_add_combination(struct driver *drv, const uint32_t format,
 			 struct format_metadata *metadata, uint64_t use_flags)
 {
+	if (format == DRM_FORMAT_P010 && !drv->p010_enabled)
+		return;
+	if (format == DRM_FORMAT_P210 && !drv->p210_enabled)
+		return;
+
 	struct combination combo = { .format = format,
 				     .metadata = *metadata,
 				     .use_flags = use_flags };

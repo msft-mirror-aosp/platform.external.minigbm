@@ -20,8 +20,12 @@
 #include <cutils/log.h>
 #include <libgen.h>
 #define MINIGBM_DEBUG "vendor.minigbm.debug"
+#define PROP_GRALLOC_P010 "vendor.minigbm.p010"
+#define PROP_GRALLOC_P210 "vendor.minigbm.p210"
 #else
 #define MINIGBM_DEBUG "MINIGBM_DEBUG"
+#define PROP_GRALLOC_P010 "MINIGBM_P010"
+#define PROP_GRALLOC_P210 "MINIGBM_P210"
 #endif
 
 #include "drv_helpers.h"
@@ -130,6 +134,8 @@ struct driver *drv_create(int fd, const struct backend *backend)
 	drv->compression =
 	    (minigbm_debug == NULL) || (strstr(minigbm_debug, "nocompression") == NULL);
 	drv->log_bos = (minigbm_debug && strstr(minigbm_debug, "log_bos") != NULL);
+	drv->p010_enabled = drv_get_os_option_bool(PROP_GRALLOC_P010, true);
+	drv->p210_enabled = drv_get_os_option_bool(PROP_GRALLOC_P210, false);
 
 	drv->fd = fd;
 	drv->backend = backend ? backend : drv_get_backend(fd);

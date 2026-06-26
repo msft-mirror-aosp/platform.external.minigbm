@@ -111,6 +111,8 @@ static uint32_t translate_format(uint32_t drm_fourcc)
 		return VIRGL_FORMAT_NV21;
 	case DRM_FORMAT_P010:
 		return VIRGL_FORMAT_P010;
+	case DRM_FORMAT_P210:
+		return VIRGL_FORMAT_P210;
 	case DRM_FORMAT_YVU420:
 	case DRM_FORMAT_YVU420_ANDROID:
 		return VIRGL_FORMAT_YV12;
@@ -215,6 +217,50 @@ static void virgl_get_emulated_metadata(const struct bo *bo, struct bo_metadata 
 
 		metadata->total_size = metadata->width * metadata->height;
 		break;
+	case DRM_FORMAT_P010:
+		// Bi-planar, 16-bit components
+		metadata->num_planes = 2;
+
+		y_plane_height = original_height;
+		c_plane_height = DIV_ROUND_UP(original_height, 2);
+
+		metadata->width = original_width * 2;
+		metadata->height = y_plane_height + c_plane_height;
+
+		// Y-plane (full resolution)
+		metadata->strides[0] = metadata->width;
+		metadata->offsets[0] = 0;
+		metadata->sizes[0] = metadata->width * y_plane_height;
+
+		// CbCr-plane (half resolution, interleaved, placed below Y-plane)
+		metadata->strides[1] = metadata->width;
+		metadata->offsets[1] = metadata->offsets[0] + metadata->sizes[0];
+		metadata->sizes[1] = metadata->width * c_plane_height;
+
+		metadata->total_size = metadata->width * metadata->height;
+		break;
+	case DRM_FORMAT_P210:
+		// Bi-planar, 16-bit components, 4:2:2
+		metadata->num_planes = 2;
+
+		y_plane_height = original_height;
+		c_plane_height = original_height;
+
+		metadata->width = original_width * 2;
+		metadata->height = y_plane_height + c_plane_height;
+
+		// Y-plane (full resolution)
+		metadata->strides[0] = metadata->width;
+		metadata->offsets[0] = 0;
+		metadata->sizes[0] = metadata->width * y_plane_height;
+
+		// CbCr-plane (full resolution height, interleaved, placed below Y-plane)
+		metadata->strides[1] = metadata->width;
+		metadata->offsets[1] = metadata->offsets[0] + metadata->sizes[0];
+		metadata->sizes[1] = metadata->width * c_plane_height;
+
+		metadata->total_size = metadata->width * metadata->height;
+		break;
 	case DRM_FORMAT_YVU420:
 	case DRM_FORMAT_YVU420_ANDROID:
 		// Tri-planar
@@ -294,6 +340,46 @@ static void virgl_get_emulated_transfers_params(const struct bo *bo,
 		xfer_params->xfer_boxes[1].y = transfer_box->y + y_plane_height;
 		xfer_params->xfer_boxes[1].width = transfer_box->width;
 		xfer_params->xfer_boxes[1].height = DIV_ROUND_UP(transfer_box->height, 2);
+
+		break;
+	case DRM_FORMAT_P010:
+		// Bi-planar, 16-bit components
+		xfer_params->xfers_needed = 2;
+
+		y_plane_height = bo->meta.height;
+		c_plane_height = DIV_ROUND_UP(bo->meta.height, 2);
+
+		// Y-plane (full resolution)
+		xfer_params->xfer_boxes[0].x = transfer_box->x * 2;
+		xfer_params->xfer_boxes[0].y = transfer_box->y;
+		xfer_params->xfer_boxes[0].width = transfer_box->width * 2;
+		xfer_params->xfer_boxes[0].height = transfer_box->height;
+
+		// CbCr-plane (half resolution, interleaved, placed below Y-plane)
+		xfer_params->xfer_boxes[1].x = transfer_box->x * 2;
+		xfer_params->xfer_boxes[1].y = transfer_box->y + y_plane_height;
+		xfer_params->xfer_boxes[1].width = transfer_box->width * 2;
+		xfer_params->xfer_boxes[1].height = DIV_ROUND_UP(transfer_box->height, 2);
+
+		break;
+	case DRM_FORMAT_P210:
+		// Bi-planar, 16-bit components, 4:2:2
+		xfer_params->xfers_needed = 2;
+
+		y_plane_height = bo->meta.height;
+		c_plane_height = bo->meta.height;
+
+		// Y-plane (full resolution)
+		xfer_params->xfer_boxes[0].x = transfer_box->x * 2;
+		xfer_params->xfer_boxes[0].y = transfer_box->y;
+		xfer_params->xfer_boxes[0].width = transfer_box->width * 2;
+		xfer_params->xfer_boxes[0].height = transfer_box->height;
+
+		// CbCr-plane (full resolution height, interleaved, placed below Y-plane)
+		xfer_params->xfer_boxes[1].x = transfer_box->x * 2;
+		xfer_params->xfer_boxes[1].y = transfer_box->y + y_plane_height;
+		xfer_params->xfer_boxes[1].width = transfer_box->width * 2;
+		xfer_params->xfer_boxes[1].height = transfer_box->height;
 
 		break;
 	case DRM_FORMAT_YVU420:
@@ -379,6 +465,7 @@ static bool virgl_supports_combination_through_emulation(struct driver *drv, uin
 		return false;
 
 	return drm_format == DRM_FORMAT_NV12 || drm_format == DRM_FORMAT_NV21 ||
+	       drm_format == DRM_FORMAT_P010 || drm_format == DRM_FORMAT_P210 ||
 	       drm_format == DRM_FORMAT_YVU420 || drm_format == DRM_FORMAT_YVU420_ANDROID;
 }
 
@@ -736,7 +823,12 @@ static int virgl_init(struct driver *drv)
 	 * when not natively supported and instead handled by HWComposer. */
 	virgl_add_combination(drv, DRM_FORMAT_P010, &LINEAR_METADATA,
 			      BO_USE_SCANOUT | BO_USE_TEXTURE | BO_USE_SW_MASK |
-				  BO_USE_CAMERA_READ | BO_USE_CAMERA_WRITE);
+				  BO_USE_CAMERA_READ | BO_USE_CAMERA_WRITE |
+				  BO_USE_HW_VIDEO_DECODER | BO_USE_HW_VIDEO_ENCODER);
+	virgl_add_combination(drv, DRM_FORMAT_P210, &LINEAR_METADATA,
+			      BO_USE_SCANOUT | BO_USE_TEXTURE | BO_USE_SW_MASK |
+				  BO_USE_CAMERA_READ | BO_USE_CAMERA_WRITE |
+				  BO_USE_HW_VIDEO_DECODER | BO_USE_HW_VIDEO_ENCODER);
 	/* Android VTS sensors hal tests require BO_USE_SENSOR_DIRECT_DATA. */
 	drv_modify_combination(drv, DRM_FORMAT_R8, &LINEAR_METADATA,
 			       BO_USE_CAMERA_READ | BO_USE_CAMERA_WRITE | BO_USE_HW_VIDEO_DECODER |
@@ -974,6 +1066,8 @@ static bool should_use_blob(struct driver *drv, uint32_t format, uint64_t use_fl
 		return (use_flags & BO_USE_SW_READ_OFTEN) && !(use_flags & BO_USE_NON_GPU_HW);
 	case DRM_FORMAT_YVU420_ANDROID:
 	case DRM_FORMAT_NV12:
+	case DRM_FORMAT_P010:
+	case DRM_FORMAT_P210:
 		// Zero copy buffers are exposed for guest software access via a persistent
 		// mapping, with no flush/invalidate messages. However, the virtio-video
 		// device relies transfers to/from the host waiting on implicit fences in

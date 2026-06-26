@@ -72,6 +72,8 @@ struct driver {
 	struct drv_array *combos;
 	bool compression;
 	bool log_bos;
+	bool p010_enabled;
+	bool p210_enabled;
 };
 
 struct backend {

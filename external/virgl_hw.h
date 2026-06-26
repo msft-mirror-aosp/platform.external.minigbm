@@ -227,6 +227,7 @@ enum virgl_formats {
    VIRGL_FORMAT_P010                    = 314,
    VIRGL_FORMAT_P012                    = 315,
    VIRGL_FORMAT_P016                    = 316,
+   VIRGL_FORMAT_P210                    = 481,
 
    VIRGL_FORMAT_MAX /* = PIPE_FORMAT_COUNT */,
 
