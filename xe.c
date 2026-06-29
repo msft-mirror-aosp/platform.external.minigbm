@@ -564,10 +564,11 @@ static int xe_bo_compute_metadata(struct bo *bo, uint32_t width, uint32_t height
 		if (!combo)
 			return -EINVAL;
 
+		uint32_t use_flags_mask = use_flags & ~BO_USE_PROTECTED;
 		if ((xe->is_mtl_or_newer) &&
-		    ((use_flags == (BO_USE_SCANOUT | BO_USE_TEXTURE | BO_USE_HW_VIDEO_DECODER)) ||
-		     (use_flags == (BO_USE_RENDERING | BO_USE_TEXTURE | BO_USE_SCANOUT)) ||
-		     (use_flags == (BO_USE_TEXTURE | BO_USE_RENDERING)))) {
+		    ((use_flags_mask == (BO_USE_SCANOUT | BO_USE_TEXTURE | BO_USE_HW_VIDEO_DECODER)) ||
+		     (use_flags_mask == (BO_USE_RENDERING | BO_USE_TEXTURE | BO_USE_SCANOUT)) ||
+		     (use_flags_mask == (BO_USE_TEXTURE | BO_USE_RENDERING)))) {
 			modifier = (xe->graphics_version >= 20) ? I915_FORMAT_MOD_4_TILED_LNL_CCS
 								: I915_FORMAT_MOD_4_TILED;
 		} else {
