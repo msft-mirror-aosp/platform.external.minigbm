@@ -126,6 +126,16 @@ static const uint32_t video_yuv_formats[] = {
 	DRM_FORMAT_YVU420_ANDROID
 };
 
+static const uint32_t chroma_subsampled_formats[] = {
+	DRM_FORMAT_NV21,
+	DRM_FORMAT_NV12,
+#ifdef SUPPORT_P010
+	DRM_FORMAT_P010,
+#endif
+	DRM_FORMAT_YVU420,
+	DRM_FORMAT_YVU420_ANDROID
+};
+
 // In addition to all scanout we should also support R8 and non YUV texture formats.
 static const uint32_t gpu_data_buffer_formats[] = {
 	DRM_FORMAT_R8,
@@ -139,6 +149,16 @@ static bool is_video_yuv_format(uint32_t format)
 	size_t i;
 	for (i = 0; i < ARRAY_SIZE(video_yuv_formats); ++i) {
 		if (format == video_yuv_formats[i])
+			return true;
+	}
+	return false;
+}
+
+static bool is_chroma_subsampled_format(uint32_t format)
+{
+	size_t i;
+	for (i = 0; i < ARRAY_SIZE(chroma_subsampled_formats); ++i) {
+		if (format == chroma_subsampled_formats[i])
 			return true;
 	}
 	return false;
@@ -423,6 +443,14 @@ static int mediatek_bo_create_with_modifiers(struct bo *bo, uint32_t width, uint
 			width = cursor_width;
 			height = cursor_height;
 		}
+	}
+
+	/*
+	 * Aligns up odd widths and heights for formats that use chroma plane
+	 * subsampling. Width alignment is handled with `stride` below.
+	 */
+	if (is_chroma_subsampled_format(format)) {
+		height = ALIGN(height, 2);
 	}
 
 	/*
