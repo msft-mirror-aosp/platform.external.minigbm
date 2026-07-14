@@ -67,20 +67,8 @@ class cros_gralloc_driver
 
 	std::unique_ptr<struct driver, void (*)(struct driver *)> drv_;
 
-	struct cros_gralloc_imported_handle_info {
-		/*
-		 * The underlying buffer for referred to by this handle (as multiple handles can
-		 * refer to the same buffer).
-		 */
-		cros_gralloc_buffer *buffer = nullptr;
-
-		/* The handle's refcount as a handle can be imported multiple times.*/
-		int32_t refcount = 1;
-	};
-
 	std::mutex mutex_;
-	std::unordered_map<uint32_t, std::unique_ptr<cros_gralloc_buffer>> buffers_;
-	std::unordered_map<cros_gralloc_handle_t, cros_gralloc_imported_handle_info> handles_;
+	std::unordered_map<cros_gralloc_handle_t, std::unique_ptr<cros_gralloc_buffer>> buffers_;
 };
 
 #endif
