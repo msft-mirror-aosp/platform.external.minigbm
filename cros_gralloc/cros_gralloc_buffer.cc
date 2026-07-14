@@ -11,6 +11,8 @@
 
 #include <cutils/native_handle.h>
 
+#include <cstring>
+
 #include "cros_gralloc_buffer_metadata.h"
 
 #ifndef HAS_NO_AIDL_METADATA
@@ -176,7 +178,9 @@ int32_t cros_gralloc_buffer::get_name(std::optional<std::string> *name) const
 		return ret;
 	}
 
-	*name = metadata->name;
+	*name = std::string(metadata->name,
+			    strnlen(metadata->name, CROS_GRALLOC_BUFFER_METADATA_MAX_NAME_SIZE));
+
 	return 0;
 }
 
