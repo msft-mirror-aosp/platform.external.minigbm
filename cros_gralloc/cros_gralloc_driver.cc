@@ -400,6 +400,7 @@ int32_t cros_gralloc_driver::retain(buffer_handle_t handle)
 	auto scoped_buffer = cros_gralloc_buffer::create(bo, hnd);
 	if (!scoped_buffer) {
 		ALOGE("Failed to import: failed to create cros_gralloc_buffer.");
+		drv_bo_destroy(bo);
 		return -1;
 	}
 
