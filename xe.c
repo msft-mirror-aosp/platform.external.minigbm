@@ -638,13 +638,18 @@ static int xe_bo_compute_metadata(struct bo *bo, uint32_t width, uint32_t height
 	if (format == DRM_FORMAT_YVU420_ANDROID) {
 		/*
 		 * We only need to be able to use this as a linear texture,
-		 * which doesn't put any HW restrictions on how we lay it
-		 * out. The Android format does require the stride to be a
-		 * multiple of 16 and expects the Cr and Cb stride to be
-		 * ALIGN(Y_stride / 2, 16), which we can make happen by
+		 * which before Xe3 doesn't put any HW restrictions on how
+		 * we lay it out. The Android format does require the stride
+		 * to be a multiple of 16 and expects the Cr and Cb stride
+		 * to be ALIGN(Y_stride / 2, 16), which we can make happen by
 		 * aligning to 32 bytes here.
+		 *
+		 * Starting with Xe3 linear surfaces must use HALIGN_128,
+		 * which means for the subsampled Cr and Cb we can align to
+		 * 256 bytes.
 		 */
-		uint32_t stride = ALIGN(width, 32);
+		uint32_t align = xe->graphics_version >= 30 ? 256 : 32;
+		uint32_t stride = ALIGN(width, align);
 		ret = drv_bo_from_format(bo, stride, 1, height, format);
 		bo->meta.total_size = ALIGN(bo->meta.total_size, getpagesize());
 	} else if (modifier == I915_FORMAT_MOD_Y_TILED_CCS) {
