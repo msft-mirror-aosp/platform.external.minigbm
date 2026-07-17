@@ -369,7 +369,13 @@ int32_t cros_gralloc_driver::retain(buffer_handle_t handle)
 
 	auto hnd = cros_gralloc_convert_handle(handle);
 	if (!hnd) {
-		ALOGE("Invalid handle.");
+		ALOGE("Failed to import: invalid handle.");
+		return -EINVAL;
+	}
+
+	if (hnd->reserved_region_size > 0 &&
+	    hnd->reserved_region_size < sizeof(struct cros_gralloc_buffer_metadata)) {
+		ALOGE("Failed to import: invalid reserved region size.");
 		return -EINVAL;
 	}
 
