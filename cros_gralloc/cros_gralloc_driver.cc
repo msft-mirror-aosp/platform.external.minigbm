@@ -6,6 +6,7 @@
 
 #include "cros_gralloc_driver.h"
 
+#include <atomic>
 #include <cstdlib>
 #include <cutils/properties.h>
 #include <fcntl.h>
