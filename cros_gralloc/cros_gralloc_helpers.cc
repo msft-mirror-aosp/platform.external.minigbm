@@ -93,7 +93,6 @@ uint32_t cros_gralloc_convert_format(int format)
 		return DRM_FORMAT_DEPTH32;
 	case HAL_PIXEL_FORMAT_DEPTH_32F_STENCIL_8:
 		return DRM_FORMAT_DEPTH32_STENCIL8;
-	}
 #if ANDROID_API_LEVEL >= 34
 	case HAL_PIXEL_FORMAT_R16_UINT:
 		return DRM_FORMAT_R16;
@@ -102,6 +101,7 @@ uint32_t cros_gralloc_convert_format(int format)
 	case HAL_PIXEL_FORMAT_RGBA_10101010:
 		return DRM_FORMAT_AXBXGXRX106106106106;
 #endif
+	}
 
 	return DRM_FORMAT_NONE;
 }
