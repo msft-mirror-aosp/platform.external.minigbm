@@ -58,6 +58,7 @@ void drv_resolve_format_and_use_flags_helper(struct driver *drv, uint32_t format
  * Get an option. Should return NULL if specified option is not set.
  */
 const char *drv_get_os_option(const char *name);
+bool drv_get_os_option_bool(const char *name, bool default_val);
 
 struct lru_entry {
 	struct lru_entry *next;

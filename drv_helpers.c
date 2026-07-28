@@ -645,11 +645,21 @@ const char *drv_get_os_option(const char *name)
 	const char *ret = getenv(name);
 #ifdef __ANDROID__
 	if (!ret) {
-		static char prop[PROPERTY_VALUE_MAX];
+		static __thread char prop[PROPERTY_VALUE_MAX];
 		return property_get(name, prop, NULL) > 0 ? prop : NULL;
 	}
 #endif
 	return ret;
+}
+
+bool drv_get_os_option_bool(const char *name, bool default_val)
+{
+	const char *opt = drv_get_os_option(name);
+	if (!opt)
+		return default_val;
+
+	return (strcmp(opt, "1") == 0 || strcmp(opt, "true") == 0 || strcmp(opt, "TRUE") == 0 ||
+		strcmp(opt, "yes") == 0 || strcmp(opt, "on") == 0);
 }
 
 static void lru_remove_entry(struct lru_entry *entry)
