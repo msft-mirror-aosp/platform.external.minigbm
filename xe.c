@@ -222,8 +222,16 @@ static int xe_add_combinations(struct driver *drv)
 
 	drv_add_combinations(drv, render_formats, ARRAY_SIZE(render_formats), &metadata_x_tiled,
 			     render_not_linear);
-	drv_add_combinations(drv, scanout_render_formats, ARRAY_SIZE(scanout_render_formats),
-			     &metadata_x_tiled, scanout_and_render_not_linear);
+
+	/* Xe3 removed scanout for [X_TILED, Y_TILED] in favor of 4_TILED
+	 * - Y_TILED was phased out with MTL+ adoption of 4-TILED.
+	 * - X_TILED was later removed for Xe3 in
+	 *   https://lore.kernel.org/all/20241028193015.3241858-9-clinton.a.taylor@intel.com
+	 */
+	if (xe->graphics_version < 30) {
+		drv_add_combinations(drv, scanout_render_formats, ARRAY_SIZE(scanout_render_formats),
+				     &metadata_x_tiled, scanout_and_render_not_linear);
+	}
 
 	/* Rendering can be supported via VK_ANDROID_external_format_resolve */
 	const uint64_t nv12_usage = BO_USE_TEXTURE | BO_USE_HW_VIDEO_DECODER | BO_USE_SCANOUT |
