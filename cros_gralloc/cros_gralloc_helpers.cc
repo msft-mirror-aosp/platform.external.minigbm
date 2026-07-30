@@ -204,6 +204,11 @@ cros_gralloc_handle_t cros_gralloc_convert_handle(buffer_handle_t handle)
 	if (!hnd || hnd->magic != cros_gralloc_magic)
 		return nullptr;
 
+	if (hnd->num_planes == 0 || hnd->num_planes > DRV_MAX_PLANES) {
+		ALOGE("Invalid handle: num_planes = %u", hnd->num_planes);
+		return nullptr;
+	}
+
 	// if hnd->reserved_region_size == 0, handle->numFds is hnd->num_planes
 	// if hnd->reserved_region_size > 0, handle->numFds is hnd->num_planes + 1
 	if ((uint32_t)handle->numFds != hnd->num_planes + (hnd->reserved_region_size > 0))
