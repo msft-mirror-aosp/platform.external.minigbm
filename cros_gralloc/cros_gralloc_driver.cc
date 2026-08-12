@@ -380,8 +380,6 @@ int32_t cros_gralloc_driver::retain(buffer_handle_t handle)
 		return -EINVAL;
 	}
 
-	cros_gralloc_buffer *buffer = nullptr;
-
 	auto buffer_it = buffers_.find(hnd);
 	if (buffer_it != buffers_.end()) {
 		ALOGE("Failed to import: already registered handle.");
