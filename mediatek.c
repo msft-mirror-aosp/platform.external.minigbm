@@ -387,6 +387,7 @@ static int mediatek_bo_create_with_modifiers(struct bo *bo, uint32_t width, uint
 	struct drm_mtk_gem_create gem_create = { 0 };
 
 	const bool is_camera_write = bo->meta.use_flags & BO_USE_CAMERA_WRITE;
+	const bool is_hw_video_decoder = bo->meta.use_flags & BO_USE_HW_VIDEO_DECODER;
 	const bool is_hw_video_encoder = bo->meta.use_flags & BO_USE_HW_VIDEO_ENCODER;
 	const bool is_linear = bo->meta.use_flags & BO_USE_LINEAR;
 	const bool is_protected = bo->meta.use_flags & BO_USE_PROTECTED;
@@ -557,29 +558,27 @@ static int mediatek_bo_create_with_modifiers(struct bo *bo, uint32_t width, uint
 			.fd_flags = O_RDWR | O_CLOEXEC,
 		};
 
-		/*
-		 * Android Desktop hardware video decoders stack currently could not allocate the
-		 * MT2T and P010 buffers accordingly. As a short term workaround, a secure P010
-		 * buffer is allocated always and handle the P010 buffer as MT2T in the video stack.
-		 * TODO(b/495560746): Remove this workaround and allocate P010 and MT2T per buffer
-		 * usage.
-		 */
-#if !defined(ANDROID)
-		if (format == DRM_FORMAT_P010) {
+		if (format == DRM_FORMAT_P010 && is_hw_video_decoder) {
 			/*
-			 * Adjust the size so we don't waste tons of space. This was allocated
-			 * with 16 bpp, but we only need 10 bpp. We can safely divide by 8 because
-			 * we are aligned at a multiple higher than that.
+			 * Adjust the stride from P010 to MT2T to save memory. Here's the math to
+			 * get the MT2T stride from the P010 stride:
+			 *
+			 * n = # samples in current stride = current stride / 2
+			 *                                   (because each sample takes two bytes)
+			 *
+			 * new stride = n * 10 bits per sample / 8 bits per byte
+			 *            = current stride * 10 / 16
+			 *            = (current stride / 8) * 5
+			 *              (the division by 8 is safe because the current stride is
+			 *              aligned to at least 16)
+			 *
+			 * TODO(b/549778281): On Android, consider not exposing MT2T through gralloc
+			 * and instead allocate intermediate MT2T buffers within the video HAL.
 			 */
-			bo->meta.strides[0] = bo->meta.strides[0] * 10 / 16;
-			bo->meta.strides[1] = bo->meta.strides[1] * 10 / 16;
-			bo->meta.sizes[0] = bo->meta.sizes[0] * 10 / 16;
-			bo->meta.sizes[1] = bo->meta.sizes[1] * 10 / 16;
-			bo->meta.offsets[1] = bo->meta.sizes[0];
-			bo->meta.total_size = bo->meta.total_size * 10 / 16;
+			stride = (stride / 8) * 5;
+			drv_bo_from_format(bo, stride, 1, height, format);
 			heap_data.len = bo->meta.total_size;
 		}
-#endif // !defined(Android)
 
 		if (priv->dma_heap_fd < 0) {
 			priv->dma_heap_fd = open(PROTECTED_DMA_HEAP_PATH, O_RDONLY | O_CLOEXEC);
