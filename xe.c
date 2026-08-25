@@ -533,16 +533,8 @@ static int xe_bo_from_format(struct bo *bo, uint32_t width, uint32_t height, uin
 			plane_height = ALIGN(plane_height, 64);
 		}
 
-		/* SKL PRMs, Volume 5: Memory Views, Buffer Padding Requirements:
-		 * BSpec 58780:
-		 *
-		 *    "For linear surfaces, additional padding of 64 bytes is required at
-		 *     the bottom of the surface."
-		 */
-		uint32_t padding = (bo->meta.tiling == XE_TILING_NONE) ? 64 : 0;
-
 		bo->meta.strides[plane] = stride;
-		bo->meta.sizes[plane] = (stride * plane_height) + padding;
+		bo->meta.sizes[plane] = stride * plane_height;
 		bo->meta.offsets[plane] = offset;
 		offset += bo->meta.sizes[plane];
 	}
@@ -663,14 +655,10 @@ static int xe_bo_compute_metadata(struct bo *bo, uint32_t width, uint32_t height
 		 * Starting with Xe3 linear surfaces must use HALIGN_128,
 		 * which means for the subsampled Cr and Cb we can align to
 		 * 256 bytes.
-		 *
-		 * Each plane also requires 64 bytes of linear sampler overfetch
-		 * padding (BSpec 58780) to match ANV/ISL surface calculations.
 		 */
 		uint32_t align = xe->graphics_version >= 30 ? 256 : 32;
 		uint32_t stride = ALIGN(width, align);
-		uint32_t padding[DRV_MAX_PLANES] = { 64, 64, 64, 0 };
-		ret = drv_bo_from_format_and_padding(bo, stride, 1, height, format, padding);
+		ret = drv_bo_from_format(bo, stride, 1, height, format);
 		bo->meta.total_size = ALIGN(bo->meta.total_size, getpagesize());
 	} else if (modifier == I915_FORMAT_MOD_Y_TILED_CCS) {
 		/*
